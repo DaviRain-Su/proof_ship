@@ -68,21 +68,23 @@ Two hard-won rules:
   second**, sailing straight past the floor. Fast thinking hitting 40% CPU
   while text streamed at 10% was this one flag.
 
-**Pulse ticks, ≤ ~30 Hz.** All repeating animation rides the shared
+**Pulse ticks, ≤ 60 Hz.** All repeating animation rides the shared
 self-parking clock in [src/ui/motion.rs](../src/ui/motion.rs): loaders read
 a phase from a shared epoch, leases expire 300 ms after the loader last
 painted, and the clock parks when no leases remain. Never use
 `with_animation(...).repeat()` — it re-arms `request_animation_frame` every
 display frame. A view's whole subtree rebuilds per tick, so cadence is priced
-per *view*, not per animation: leases carry a stride (`spin_slow`,
-`pulse_lease_slow`, `Pulse::every(2)` ≈ 15 Hz) for loaders mounted on
-expensive surfaces — the working dots set the transcript pane's tick floor for
-the entire turn. Strides re-establish on every tick (a lease's stride resets
-after it fires); an earlier version kept the minimum stride forever, so one
-full-rate lease permanently dragged its pane back to 30 Hz.
+per *view*, not per animation: spinners use the full 60 Hz rate, while
+`spin_slow` uses every second tick (≈ 30 Hz). Non-spinning pulses and
+`pulse_lease` retain ≈ 30 Hz; `pulse_lease_slow` and `Pulse::every(2)` use
+≈ 15 Hz for loaders mounted on expensive surfaces — the working dots set the
+transcript pane's tick floor for the entire turn. Strides re-establish on
+every tick (a lease's stride resets after it fires); an earlier version kept
+the minimum stride forever, so one full-rate lease permanently dragged its
+pane back to 30 Hz.
 
 The veil dissolve is a pulse-clock client like everything else: the message
-veil at full rate, the reasoning veil strided, both leasing
+veil at ≈ 30 Hz, the reasoning veil at ≈ 15 Hz, both leasing
 `window.current_view()` so a dissolve only rebuilds the island that hosts it.
 
 **Overlay scrollbars are the classic violator of both cadences.** A streaming
