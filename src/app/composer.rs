@@ -996,7 +996,10 @@ impl Waku {
                             ))
                             .on_click(move |_, _, cx| {
                                 let _ = favorite_weak.update(cx, |this, cx| {
-                                    this.select_model_picker_tab(ModelPickerTab::Favorites, cx);
+                                    this.select_model_picker_tab_from_rail(
+                                        ModelPickerTab::Favorites,
+                                        cx,
+                                    );
                                 });
                             }),
                     )
@@ -1040,7 +1043,7 @@ impl Waku {
                                 element.hover(|element| element.bg(theme.overlay)).on_click(
                                     move |_, _, cx| {
                                         let _ = tab_weak.update(cx, |this, cx| {
-                                            this.select_model_picker_tab(
+                                            this.select_model_picker_tab_from_rail(
                                                 ModelPickerTab::Provider(kind),
                                                 cx,
                                             );

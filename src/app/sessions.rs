@@ -1016,6 +1016,23 @@ impl Waku {
         }
     }
 
+    /// A sidebar rail click is an explicit "show me this tab": it exits search
+    /// mode even when the clicked tab is already selected. A live query spans
+    /// every provider and hides which tab is selected, so a click that left
+    /// the query in place would visibly do nothing — `select_model_picker_tab`
+    /// also bails when the tab is unchanged, which is exactly the state that
+    /// query leaves it in. Clearing the field first emits an edit, which
+    /// resets the keyboard highlight and re-reveals the current model under
+    /// the now-unfiltered list.
+    pub(super) fn select_model_picker_tab_from_rail(
+        &mut self,
+        tab: ModelPickerTab,
+        cx: &mut Context<Self>,
+    ) {
+        self.model_search.update(cx, |input, cx| input.clear(cx));
+        self.select_model_picker_tab(tab, cx);
+    }
+
     pub(super) fn toggle_favorite_model(
         &mut self,
         provider: ProviderKind,
