@@ -27,6 +27,7 @@ import { useAllProviderModels, useProviderModels } from '@/hooks/use-daemon-data
 import { useTheme } from '@/hooks/use-theme';
 import {
   resolveModelTraitSelection,
+  resolveServiceTier,
   type ModelTraitSelection,
 } from '@/lib/model-traits';
 import { providerLabel, runtimeModeLabel } from '@/lib/session-presentation';
@@ -34,6 +35,7 @@ import { providerLabel, runtimeModeLabel } from '@/lib/session-presentation';
 export interface ModelSelection {
   model: string | null;
   reasoningEffort: string | null;
+  serviceTier: string | null;
 }
 
 export function modelDisplayName(
@@ -44,13 +46,14 @@ export function modelDisplayName(
   return models?.find((item) => item.id === model)?.name ?? model;
 }
 
-/** Model + reasoning-effort picker, backed by the daemon's model discovery. */
+/** Model, reasoning-effort, and service-tier picker backed by the daemon's model discovery. */
 export function ModelSheet({
   visible,
   onDismiss,
   provider,
   model,
   reasoningEffort,
+  serviceTier,
   onApply,
 }: {
   visible: boolean;
@@ -58,7 +61,8 @@ export function ModelSheet({
   provider: ProviderKind;
   model: string | null;
   reasoningEffort: string | null;
-  onApply: (selection: ModelSelection) => void;
+  serviceTier: string | null;
+  onApply: (selection: Partial<ModelSelection>) => void;
 }) {
   const theme = useTheme();
   const probe = useProviderModels(visible ? provider : null);
@@ -72,7 +76,7 @@ export function ModelSheet({
       model: next.id,
       reasoningEffort: next.default_reasoning_effort ?? null,
     });
-    if (!next.reasoning_efforts.length) onDismiss();
+    if (!next.reasoning_efforts.length && !next.service_tiers.length) onDismiss();
   }
 
   return (
@@ -121,6 +125,17 @@ export function ModelSheet({
               ))}
             </>
           ) : null}
+          {selected && (
+            <ServiceTierOptions
+              model={selected}
+              onApply={(tier) => {
+                void Haptics.selectionAsync();
+                onApply({ serviceTier: tier });
+                onDismiss();
+              }}
+              serviceTier={serviceTier}
+            />
+          )}
         </>
       )}
     </Sheet>
@@ -172,33 +187,11 @@ export function ModelTraitsSheet({
           ))}
         </>
       ) : null}
-      {model.service_tiers.length ? (
-        <>
-          <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
-            SERVICE TIER
-          </Text>
-          <SheetRow
-            description={(model.default_service_tier ?? 'default') === 'default'
-              ? 'Default'
-              : undefined}
-            label="Standard"
-            onPress={() => pick({ serviceTier: 'default' })}
-            selected={resolved.serviceTier === 'default'}
-          />
-          {model.service_tiers.map((option) => (
-            <SheetRow
-              description={optionDescription(
-                option.description,
-                model.default_service_tier === option.id,
-              )}
-              key={option.id}
-              label={option.label}
-              onPress={() => pick({ serviceTier: option.id })}
-              selected={resolved.serviceTier === option.id}
-            />
-          ))}
-        </>
-      ) : null}
+      <ServiceTierOptions
+        model={model}
+        onApply={(tier) => pick({ serviceTier: tier })}
+        serviceTier={selection.serviceTier}
+      />
       {model.context_windows.length ? (
         <>
           <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
@@ -219,6 +212,50 @@ export function ModelTraitsSheet({
         </>
       ) : null}
     </Sheet>
+  );
+}
+
+/** Shared by the new-task and ongoing-task composers. Keep the provider's
+ * concrete tier IDs, including `priority` when it advertises Fast that way. */
+function ServiceTierOptions({
+  model,
+  serviceTier,
+  onApply,
+}: {
+  model: ProviderModel;
+  serviceTier: string | null;
+  onApply: (tier: string) => void;
+}) {
+  const theme = useTheme();
+  if (!model.service_tiers.length) return null;
+  const selected = resolveServiceTier(model, serviceTier);
+
+  return (
+    <>
+      <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
+        SERVICE TIER
+      </Text>
+      <SheetRow
+        description={(model.default_service_tier ?? 'default') === 'default'
+          ? 'Default'
+          : undefined}
+        label="Standard"
+        onPress={() => onApply('default')}
+        selected={selected === 'default'}
+      />
+      {model.service_tiers.map((option) => (
+        <SheetRow
+          description={optionDescription(
+            option.description,
+            model.default_service_tier === option.id,
+          )}
+          key={option.id}
+          label={option.label}
+          onPress={() => onApply(option.id)}
+          selected={selected === option.id}
+        />
+      ))}
+    </>
   );
 }
 

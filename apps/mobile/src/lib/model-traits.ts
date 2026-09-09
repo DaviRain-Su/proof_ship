@@ -53,7 +53,7 @@ export function modelTraitSummary(
   return labels.join(' · ');
 }
 
-function resolveServiceTier(model: ProviderModel, selected: string | null): string | null {
+export function resolveServiceTier(model: ProviderModel, selected: string | null): string | null {
   if (!model.service_tiers.length) return null;
   if (selected === 'default' || hasOption(model.service_tiers, selected)) return selected;
   const fallback = model.default_service_tier ?? 'default';

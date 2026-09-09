@@ -506,7 +506,7 @@ export function MobileComposer({
           <>
             <ComposerIconButton
               icon={{ ios: 'speedometer', android: 'speed', web: 'speed' }}
-              label="Model"
+              label="Model options"
               onPress={() => setModelSheetOpen(true)}
             />
             {busy && (
@@ -564,6 +564,7 @@ export function MobileComposer({
         onDismiss={() => setModelSheetOpen(false)}
         provider={session.provider}
         reasoningEffort={session.reasoning_effort ?? null}
+        serviceTier={session.service_tier ?? null}
         visible={modelSheetOpen}
       />
     </View>
