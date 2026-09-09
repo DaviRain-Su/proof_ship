@@ -7,6 +7,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 
 import { ActivityGroup } from '@/components/activity-group';
 import { AppSymbol } from '@/components/app-symbol';
+import { AttachmentTile } from '@/components/attachment-tile';
 import {
   MdBlockLive,
   MdBlockSettled,
@@ -153,37 +154,25 @@ function UserBubbleInner({ message }: { message: Message }) {
 
   return (
     <View style={styles.userFrame}>
-      <Pressable
-        accessibilityHint="Long press to copy"
-        delayLongPress={350}
-        onLongPress={() => void copy()}
-        style={[styles.userBubble, { backgroundColor: theme.raised }]}>
-        {content ? (
+      {message.attachments?.length ? (
+        <View style={styles.attachments}>
+          {message.attachments.map((attachment, index) => (
+            <AttachmentTile
+              attachment={attachment}
+              key={`${attachment.blob_reference ?? attachment.path}:${index}`}
+            />
+          ))}
+        </View>
+      ) : null}
+      {content ? (
+        <Pressable
+          accessibilityHint="Long press to copy"
+          delayLongPress={350}
+          onLongPress={() => void copy()}
+          style={[styles.userBubble, { backgroundColor: theme.raised }]}>
           <Text selectable style={[styles.userText, { color: theme.text }]}>{content}</Text>
-        ) : null}
-        {message.attachments?.length ? (
-          <View style={styles.attachments}>
-            {message.attachments.map((attachment) => (
-              <View
-                key={`${attachment.path}:${attachment.name}`}
-                style={[styles.attachment, { backgroundColor: theme.overlayStrong }]}>
-                <AppSymbol
-                  name={{
-                    ios: attachment.is_image ? 'photo' : 'doc',
-                    android: attachment.is_image ? 'image' : 'description',
-                    web: 'description',
-                  }}
-                  size={12}
-                  tintColor={theme.textSecondary}
-                />
-                <Text numberOfLines={1} style={[styles.attachmentText, { color: theme.textSecondary }]}>
-                  {attachment.name}
-                </Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-      </Pressable>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -327,7 +316,7 @@ export function SessionEmpty({
 
 const styles = StyleSheet.create({
   earlier: { alignItems: 'center', paddingVertical: 10 },
-  userFrame: { alignItems: 'flex-end' },
+  userFrame: { alignItems: 'flex-end', gap: 6 },
   userBubble: {
     borderRadius: Radius.large,
     borderBottomRightRadius: 6,
@@ -347,17 +336,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     textAlign: 'center',
   },
-  attachments: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 9 },
-  attachment: {
-    alignItems: 'center',
-    borderRadius: Radius.small,
-    flexDirection: 'row',
-    gap: 5,
-    maxWidth: 220,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-  },
-  attachmentText: { flexShrink: 1, fontSize: 11.5 },
+  attachments: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8, maxWidth: '88%' },
   foldRow: {
     alignItems: 'center',
     flexDirection: 'row',

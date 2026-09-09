@@ -21,6 +21,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppSymbol } from './app-symbol';
+import { AttachmentTile } from './attachment-tile';
 import { ComposerAccessMenu } from './composer-access-menu';
 import {
   ComposerAttachmentMenu,
@@ -453,42 +454,19 @@ export function MobileComposer({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.attachmentStrip}>
             {attachments.map((attachment, index) => (
-              <Pressable
-                accessibilityLabel={`Remove ${attachment.name}`}
-                accessibilityRole="button"
-                disabled={submitting}
+              <AttachmentTile
+                attachment={attachment}
+                compact
                 key={`${attachment.blob_reference ?? attachment.path}:${index}`}
-                onPress={() => {
+                onRemove={() => {
                   draftSync.markEdited();
                   setAttachments((current) => current.filter((_, item) => item !== index));
                 }}
-                style={({ pressed }) => [
-                  styles.attachmentChip,
-                  { backgroundColor: theme.overlayStrong, opacity: pressed ? 0.6 : 1 },
-                ]}>
-                <AppSymbol
-                  name={{
-                    ios: attachment.is_image ? 'photo' : 'doc',
-                    android: attachment.is_image ? 'image' : 'description',
-                    web: 'description',
-                  }}
-                  size={13}
-                  tintColor={theme.textSecondary}
-                />
-                <Text
-                  numberOfLines={1}
-                  style={[styles.attachmentName, { color: theme.textSecondary }]}>
-                  {attachment.name}
-                </Text>
-                <AppSymbol
-                  name={{ ios: 'xmark', android: 'close', web: 'close' }}
-                  size={9}
-                  tintColor={theme.textTertiary}
-                />
-              </Pressable>
+                removeDisabled={submitting}
+              />
             ))}
             {importingAttachments && (
-              <View style={[styles.attachmentChip, { backgroundColor: theme.overlayStrong }]}>
+              <View style={[styles.attachmentLoading, { backgroundColor: theme.inset, borderColor: theme.border }]}>
                 <ActivityIndicator color={theme.textSecondary} size="small" />
                 <Text style={[styles.attachmentName, { color: theme.textSecondary }]}>Attaching…</Text>
               </View>
@@ -857,17 +835,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 8,
   },
-  attachmentStrip: { gap: 6, paddingHorizontal: 4, paddingTop: 4 },
-  attachmentChip: {
+  attachmentStrip: { gap: 8, paddingHorizontal: 4, paddingTop: 4, paddingBottom: 6 },
+  attachmentLoading: {
     alignItems: 'center',
-    borderRadius: Radius.small,
-    flexDirection: 'row',
-    gap: 6,
-    height: 30,
-    maxWidth: 190,
-    paddingHorizontal: 9,
+    borderRadius: 9,
+    borderWidth: 1,
+    justifyContent: 'center',
+    gap: 7,
+    height: 80,
+    width: 80,
   },
-  attachmentName: { flexShrink: 1, fontSize: 12, fontWeight: '600' },
+  attachmentName: { fontSize: 11.5 },
   toolbar: { alignItems: 'center', flexDirection: 'row', marginTop: 2 },
   toolbarSpacer: { flex: 1 },
   cluster: { alignItems: 'center', flexDirection: 'row', gap: 2 },

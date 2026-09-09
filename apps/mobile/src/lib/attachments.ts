@@ -1,3 +1,4 @@
+import { queryOptions } from '@tanstack/react-query';
 import {
   MAX_WIRE_MESSAGE_BYTES,
   type MessageAttachment,
@@ -18,6 +19,50 @@ export interface LocalAttachmentFile {
   size?: number | null;
   /** Picker-provided data avoids reading the URI again when available. */
   base64?: string | null;
+}
+
+/** Shared by staged and sent attachments. Daemon paths belong to the host,
+ * so even a phone on the same network must load bytes through its client. */
+export async function readAttachmentImage(
+  client: WakuClient,
+  attachment: MessageAttachment,
+): Promise<string> {
+  const reference = attachment.blob_reference;
+  if (!reference) throw new Error('This attachment has no daemon reference');
+  const command = reference.startsWith('waku-blob:')
+    ? ({ type: 'readBlob', reference } as const)
+    : ({ type: 'readAttachment', reference, path: attachment.path } as const);
+  const response = await client.request(command);
+  if (response.type !== 'blobData') {
+    throw new Error(`Expected blobData, received ${response.type}`);
+  }
+  return `data:${imageMimeType(attachment.name)};base64,${response.bytes}`;
+}
+
+export function attachmentImageQuery(
+  client: WakuClient | null,
+  profile: { id: string; address: string } | null,
+  attachment: MessageAttachment,
+  connected: boolean,
+) {
+  return queryOptions({
+    queryKey: [
+      'daemon', profile?.id ?? 'disconnected', 'attachment-image',
+      profile?.address, attachment.blob_reference, attachment.path, attachment.name,
+    ] as const,
+    queryFn: () => {
+      if (!client) throw new Error('Waku daemon is disconnected');
+      return readAttachmentImage(client, attachment);
+    },
+    enabled: connected && Boolean(
+      client && profile && attachment.is_image && !attachment.is_dir && attachment.blob_reference,
+    ),
+    // Stored attachments are immutable. Reuse the composer preview after send
+    // and across row remounts, but release unused base64 data after a minute.
+    staleTime: Infinity,
+    gcTime: 60_000,
+    retry: false,
+  });
 }
 
 export async function importLocalAttachment(
@@ -78,9 +123,22 @@ function base64ByteLength(value: string): number {
 }
 
 function isImageName(name: string): boolean {
-  return ['avif', 'gif', 'heic', 'jpeg', 'jpg', 'png', 'svg', 'webp'].includes(
-    name.split('.').at(-1)?.toLowerCase() ?? '',
-  );
+  return imageMimeType(name) !== 'application/octet-stream';
+}
+
+function imageMimeType(name: string): string {
+  const types: Record<string, string> = {
+    avif: 'image/avif',
+    gif: 'image/gif',
+    heic: 'image/heic',
+    jpeg: 'image/jpeg',
+    jpg: 'image/jpeg',
+    png: 'image/png',
+    svg: 'image/svg+xml',
+    webp: 'image/webp',
+  };
+  const extension = name.split('.').at(-1)?.toLowerCase() ?? '';
+  return Object.hasOwn(types, extension) ? types[extension]! : 'application/octet-stream';
 }
 
 function attachmentTooLarge(name: string): Error {
