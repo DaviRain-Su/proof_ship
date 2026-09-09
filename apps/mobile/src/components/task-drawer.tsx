@@ -13,6 +13,7 @@ import {
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -45,6 +46,7 @@ import {
   displaySessionTitle,
   groupSessions,
   providerLabel,
+  relativeSessionTime,
   type SessionListItem,
 } from '@/lib/session-presentation';
 
@@ -95,6 +97,7 @@ export function TaskDrawerHost({ children }: { children: ReactNode }) {
           renderDrawerContent={() => (
             <TaskDrawerContent
               drawerWidth={drawerWidth}
+              open={open}
               selectedSessionId={selectedSessionId}
               onClose={closeTaskDrawer}
             />
@@ -120,10 +123,12 @@ export function useTaskDrawer(): TaskDrawerContextValue {
 
 function TaskDrawerContent({
   drawerWidth,
+  open,
   selectedSessionId,
   onClose,
 }: {
   drawerWidth: number;
+  open: boolean;
   selectedSessionId: string | null;
   onClose: () => void;
 }) {
@@ -136,6 +141,31 @@ function TaskDrawerContent({
   const [refreshing, setRefreshing] = useState(false);
   const [daemonPickerOpen, setDaemonPickerOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<AgentSession | null>(null);
+  const [now, setNow] = useState(Date.now);
+  // Share one clock across visible rows, and park it while the drawer or app
+  // is hidden so recency labels add no work to the conversation screen.
+  useEffect(() => {
+    if (!open) return;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const refresh = () => setNow(Date.now());
+    const updateClock = (state: string | null) => {
+      clearInterval(timer);
+      if (state === 'active' || state === null) {
+        refresh();
+        timer = setInterval(refresh, 30_000);
+      }
+    };
+    updateClock(AppState.currentState);
+    const subscription = AppState.addEventListener('change', updateClock);
+    return () => {
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [open]);
+  const listExtraData = useMemo(
+    () => ({ runtimes: runtime.runtimes, now }),
+    [runtime.runtimes, now],
+  );
   const visibleSessions = useMemo(() => {
     if (!taskState.data) return [];
     const query = search.trim().toLocaleLowerCase();
@@ -214,7 +244,7 @@ function TaskDrawerContent({
 
       <SectionList
         sections={sections}
-        extraData={runtime.runtimes}
+        extraData={listExtraData}
         keyExtractor={(item) => item.session.id}
         contentContainerStyle={[
           styles.listContent,
@@ -241,6 +271,7 @@ function TaskDrawerContent({
           <SessionRow
             drawerWidth={drawerWidth}
             item={item}
+            now={now}
             running={runtime.runtimes[item.session.id]?.running ?? sessionIsRunning(item.session)}
             selected={item.session.id === selectedSessionId}
             onDelete={() => confirmDelete(item.session)}
@@ -444,6 +475,7 @@ function TaskListEmpty({
 function SessionRow({
   drawerWidth,
   item,
+  now,
   running,
   selected,
   onDelete,
@@ -452,6 +484,7 @@ function SessionRow({
 }: {
   drawerWidth: number;
   item: SessionListItem;
+  now: number;
   running: boolean;
   selected: boolean;
   onDelete: () => void;
@@ -461,9 +494,12 @@ function SessionRow({
   const theme = useTheme();
   const rowWidth = Math.max(0, drawerWidth - 24);
   const session = item.session;
+  const lastReplyTime = session.last_reply_at == null
+    ? null
+    : relativeSessionTime(session.last_reply_at, now);
   return (
     <TaskRowMenu
-      accessibilityLabel={`${displaySessionTitle(session)}, ${providerLabel(session.provider)} in ${item.projectName}${running ? ', Running' : ''}`}
+      accessibilityLabel={`${displaySessionTitle(session)}, ${providerLabel(session.provider)} in ${item.projectName}${running ? ', Running' : ''}${lastReplyTime ? `, Last reply: ${lastReplyTime}` : ''}`}
       onDelete={onDelete}
       onRename={onRename}
       onSelect={onSelect}
@@ -498,6 +534,13 @@ function SessionRow({
               style={[styles.sessionProject, { color: theme.textTertiary }]}>
               {item.projectName}
             </Text>
+            {lastReplyTime !== null && (
+              <Text
+                numberOfLines={1}
+                style={[styles.sessionTime, { color: theme.textTertiary }]}>
+                {lastReplyTime}
+              </Text>
+            )}
           </View>
         </View>
       )}
@@ -592,6 +635,7 @@ const styles = StyleSheet.create({
   sessionHeading: { alignItems: 'center', flexDirection: 'row', gap: 8 },
   sessionMetadata: { alignItems: 'center', flexDirection: 'row', gap: 5 },
   sessionProject: { flex: 1, fontSize: 12.5, lineHeight: 17 },
+  sessionTime: { flexShrink: 0, fontSize: 12.5, lineHeight: 17, marginLeft: 3 },
   sessionSpinner: { height: 14, transform: [{ scale: 0.72 }], width: 14 },
   sessionTitle: {
     flex: 1,

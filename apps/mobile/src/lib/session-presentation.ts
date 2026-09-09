@@ -156,13 +156,10 @@ export function sessionDateGroup(timestamp: number, now = new Date()): SessionGr
 
 export function relativeSessionTime(timestamp: number, now = Date.now()): string {
   const elapsed = Math.max(0, Math.floor(now / 1_000) - timestamp);
-  if (elapsed < 60) return 'Now';
+  if (elapsed < 60) return 'just now';
   if (elapsed < 3_600) return `${Math.floor(elapsed / 60)}m`;
   if (elapsed < 86_400) return `${Math.floor(elapsed / 3_600)}h`;
-  if (elapsed < 604_800) return `${Math.floor(elapsed / 86_400)}d`;
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(
-    new Date(timestamp * 1_000),
-  );
+  return `${Math.floor(elapsed / 86_400)}d`;
 }
 
 export function providerLabel(provider: ProviderKind): string {

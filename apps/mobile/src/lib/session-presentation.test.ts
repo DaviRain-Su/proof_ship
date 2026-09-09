@@ -41,7 +41,7 @@ describe('mobile session presentation', () => {
   });
 
   test('formats compact recency labels', () => {
-    expect(relativeSessionTime(1_000, 1_030_000)).toBe('Now');
+    expect(relativeSessionTime(1_000, 1_030_000)).toBe('just now');
     expect(relativeSessionTime(1_000, 1_300_000)).toBe('5m');
     const now = new Date(2026, 7, 12, 12);
     expect(sessionDateGroup(epoch(2026, 7, 12, 12), now)).toBe('today');
