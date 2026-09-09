@@ -62,6 +62,9 @@ export interface MobileRuntime {
 }
 
 interface RuntimeEntry extends MobileRuntime {
+  /** Latest full projection, retained while subscribed even if the screen's
+   * query is evicted. Never fall back to the snapshot captured on attach. */
+  session: AgentSession;
   lastDriverError: string | null;
   unsubscribe: () => void;
   /** Buffered runtime events awaiting the next commit. */
@@ -167,6 +170,8 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
   const writeSessionCache = useCallback((session: AgentSession) => {
     const profileId = daemon.activeProfile?.id;
     if (!profileId) return;
+    const entry = entries.current.get(session.id);
+    if (entry) entry.session = session;
     queryClient.setQueryData(daemonKeys.session(profileId, session.id), session);
     queryClient.setQueryData<TaskState>(daemonKeys.taskState(profileId), (current) => {
       if (!current) return current;
@@ -201,11 +206,15 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     if (!client || !profileId) throw new Error('Waku daemon is disconnected');
     const cached = queryClient.getQueryData<AgentSession>(
       daemonKeys.session(profileId, sessionId),
-    );
+    ) ?? entries.current.get(sessionId)?.session;
     if (cached) return cached;
-    const hydrated = await hydrateSession(client, sessionId);
+    // Share the screen's in-flight hydration. An independent fetch could
+    // finish after subscription and overwrite events already applied live.
+    const hydrated = await queryClient.fetchQuery({
+      queryKey: daemonKeys.session(profileId, sessionId),
+      queryFn: () => hydrateSession(client, sessionId),
+    });
     if (!hydrated) throw new Error('This task no longer exists on the daemon');
-    queryClient.setQueryData(daemonKeys.session(profileId, sessionId), hydrated);
     return hydrated;
   }, [daemon.activeProfile?.id, daemon.client, queryClient]);
 
@@ -310,6 +319,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     if (existing) return existing;
 
     const entry: RuntimeEntry = {
+      session,
       runtimeId,
       supportsSteer,
       starting,
@@ -410,7 +420,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
       if (!batch.length) return;
       const key = daemonKeys.session(profileId, session.id);
       const state: FlushState = {
-        current: queryClient.getQueryData<AgentSession>(key) ?? session,
+        current: queryClient.getQueryData<AgentSession>(key) ?? entry.session,
         mutated: false,
         settled: false,
         removeRuntime: false,
@@ -493,11 +503,14 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     if (pending) return pending;
 
     const request = (async () => {
+      // The screen may still be displaying a list placeholder. Its empty
+      // arrays are not a transcript, so hydrate before replaying any events.
+      const hydrated = await loadFullSession(session.id);
       const attached = await attachDaemonSession(client, session.id);
       if (!client.connected || !attached) return false;
       const current = queryClient.getQueryData<AgentSession>(
         daemonKeys.session(profileId, session.id),
-      ) ?? session;
+      ) ?? hydrated;
       subscribe(current, attached.runtimeId, attached.supportsSteer, false);
       return true;
     })().finally(() => {
@@ -505,7 +518,7 @@ export function RuntimeProvider({ children }: { children: ReactNode }) {
     });
     attachRequests.current.set(session.id, request);
     return request;
-  }, [daemon.activeProfile?.id, daemon.client, daemon.phase, queryClient, subscribe]);
+  }, [daemon.activeProfile?.id, daemon.client, daemon.phase, loadFullSession, queryClient, subscribe]);
 
   const sendPrompt = useCallback(async (
     inputSession: AgentSession,
