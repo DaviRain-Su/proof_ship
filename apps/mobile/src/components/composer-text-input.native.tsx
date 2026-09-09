@@ -4,14 +4,16 @@ import { TextInput } from 'react-native';
 import type { ComposerTextInputProps } from './composer-text-input.types';
 
 export function ComposerTextInput({
+  inputRef,
   onPasteError,
   onPasteFiles,
   ...props
 }: ComposerTextInputProps) {
-  if (!onPasteFiles) return <TextInput {...props} />;
+  if (!onPasteFiles) return <TextInput ref={inputRef} {...props} />;
 
   return (
     <PasteInput
+      ref={inputRef}
       {...props}
       disableCopyPaste={false}
       onPaste={(error, files) => {

@@ -5,6 +5,7 @@ import {
   applySessionOptions,
   beginTurn,
   createSession,
+  createResumedSession,
   queueSubmission,
   runtimeEventAlreadyApplied,
   sessionBusy,
@@ -14,6 +15,20 @@ import {
 } from './mobile-runtime';
 
 describe('mobile runtime projection', () => {
+  test('imports provider history with the native resume cursor and project context', () => {
+    const existing = session();
+    const resumed = createResumedSession('project', {
+      cursor: { provider: 'codex', threadId: 'native-thread' },
+      title: 'Terminal task', cwd: '/repo', created_at: 10, updated_at: 20,
+    }, { messages: existing.messages, turns: existing.turns }, 'ask', {
+      nowSeconds: () => 42, randomUUID: () => 'resumed-task',
+    });
+    expect(resumed).toMatchObject({
+      id: 'resumed-task', project_id: 'project', provider: 'codex', runtime_mode: 'ask',
+      auto_title: 'Terminal task', provider_cursor: { provider: 'codex', threadId: 'native-thread' },
+      created_at: 10, updated_at: 20, messages: existing.messages, turns: existing.turns,
+    });
+  });
   test('begins a turn with a user message and prompt-derived title', () => {
     let id = 0;
     const started = beginTurn(session(), '  Fix the mobile reconnect race  ', {

@@ -13,18 +13,20 @@ const AttachmentActions: MenuAction[] = [
   { id: 'photo', title: 'Photo', image: 'photo' },
 ];
 
-export function ComposerAttachmentMenu({
+export function ComposerAddMenu({
   disabled = false,
   onChoose,
+  onChooseContext,
 }: {
   disabled?: boolean;
-  onChoose: (source: ComposerAttachmentSource) => void;
+  onChoose?: (source: ComposerAttachmentSource) => void;
+  onChooseContext: (kind: 'command' | 'file') => void;
 }) {
   const theme = useTheme();
   const trigger = (
     <View
       accessible
-      accessibilityLabel="Add attachment"
+      accessibilityLabel="Add to message"
       accessibilityRole="button"
       accessibilityState={{ disabled }}
       style={[styles.trigger, { opacity: disabled ? 0.35 : 1 }]}>
@@ -39,11 +41,18 @@ export function ComposerAttachmentMenu({
 
   return (
     <MenuView
-      actions={AttachmentActions}
+      actions={[
+        { id: 'command', title: 'Commands', image: 'command' },
+        { id: 'mention', title: 'Mention files', image: 'at' },
+        ...(onChoose ? AttachmentActions : []),
+      ]}
       onPressAction={({ nativeEvent }) => {
-        const source = nativeEvent.event as ComposerAttachmentSource;
+        const source = nativeEvent.event;
         // Let the native menu finish dismissing before presenting a picker.
-        setTimeout(() => onChoose(source), 160);
+        setTimeout(() => {
+          if (source === 'command' || source === 'mention') onChooseContext(source === 'command' ? 'command' : 'file');
+          else if (source === 'files' || source === 'camera' || source === 'photo') onChoose?.(source);
+        }, 160);
       }}>
       {trigger}
     </MenuView>

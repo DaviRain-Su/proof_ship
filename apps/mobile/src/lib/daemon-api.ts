@@ -3,12 +3,16 @@ import type {
   BranchSnapshot,
   ComposerDraftChange,
   DaemonSettings,
+  FileEntry,
   Project,
   ProviderKind,
   ProviderProbe,
+  ProviderSessionSummary,
+  ProviderSessionHistory,
   ReviewDiffData,
   ReviewDiffSource,
   ResponsePayload,
+  SlashCommand,
   WakuClient,
   WorkingTreeEntry,
   WorkspaceResult,
@@ -58,6 +62,18 @@ export const daemonKeys = {
     root,
     relativePath,
   ] as const,
+  composerCommands: (
+    profileId: string,
+    provider: ProviderKind | null,
+    root: string | null,
+    binaryOverride: string | null,
+  ) => ['daemon', profileId, 'composer-commands', provider, root, binaryOverride] as const,
+  composerFiles: (profileId: string, root: string | null) => [
+    'daemon', profileId, 'composer-files', root,
+  ] as const,
+  providerSessions: (profileId: string, provider: ProviderKind) => [
+    'daemon', profileId, 'provider-sessions', provider,
+  ] as const,
   workspaceDiff: (profileId: string, root: string, source: ReviewDiffSource) => [
     'daemon',
     profileId,
@@ -80,6 +96,31 @@ export async function hydrateSession(
     'session',
   );
   return response.session;
+}
+
+export async function listProviderSessions(
+  client: WakuClient,
+  provider: ProviderKind,
+): Promise<ProviderSessionSummary[]> {
+  return expectResponse(
+    await client.request({ type: 'listProviderSessions', provider, limit: 250 }),
+    'providerSessions',
+  ).sessions;
+}
+
+export async function loadProviderSessionHistory(
+  client: WakuClient,
+  summary: ProviderSessionSummary,
+): Promise<ProviderSessionHistory> {
+  return expectResponse(await client.request({
+    type: 'loadProviderSession', cursor: summary.cursor, cwd: summary.cwd,
+  }), 'providerSessionHistory').history;
+}
+
+export function providerSessionKey(cursor: ProviderSessionSummary['cursor']): string {
+  const id = cursor.provider === 'codex' || cursor.provider === 'amp'
+    ? cursor.threadId : cursor.sessionId;
+  return `${cursor.provider}:${id}`;
 }
 
 export async function attachDaemonSession(
@@ -266,6 +307,38 @@ export async function listWorkspaceTree(
   );
   if (response.result.type !== 'workingTree') {
     throw new Error('The daemon returned an unexpected file tree');
+  }
+  return response.result.entries;
+}
+
+export async function discoverComposerCommands(
+  client: WakuClient,
+  provider: ProviderKind,
+  root: string,
+  binaryOverride: string | null,
+): Promise<SlashCommand[]> {
+  const response = expectResponse(await client.request({
+    type: 'workspace',
+    operation: {
+      type: 'discoverSlashCommands',
+      provider,
+      project_root: root,
+      binary_override: binaryOverride,
+    },
+  }), 'workspace');
+  if (response.result.type !== 'slashCommands') {
+    throw new Error('The daemon returned an unexpected command catalog');
+  }
+  return response.result.commands;
+}
+
+export async function listComposerFiles(client: WakuClient, root: string): Promise<FileEntry[]> {
+  const response = expectResponse(await client.request({
+    type: 'workspace',
+    operation: { type: 'listProjectFiles', root, cap: 50_000 },
+  }), 'workspace');
+  if (response.result.type !== 'projectFiles') {
+    throw new Error('The daemon returned an unexpected project file index');
   }
   return response.result.entries;
 }

@@ -21,6 +21,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppSymbol } from '@/components/app-symbol';
 import { ComposerAccessMenu } from '@/components/composer-access-menu';
+import { ComposerAddMenu } from '@/components/composer-add-menu';
+import { ComposerContextPicker } from '@/components/composer-context-picker';
+import { useComposerLocalCommands } from '@/components/composer-command-sheets';
 import { DaemonPickerSheet } from '@/components/daemon-picker-sheet';
 import {
   ComposerCard,
@@ -37,9 +40,11 @@ import {
 import { Sheet, SheetRow } from '@/components/sheet';
 import { Radius, Spacing } from '@/constants/theme';
 import { useAllProviderModels, useProviderCatalog, useTaskState } from '@/hooks/use-daemon-data';
+import { useComposerPicker } from '@/hooks/use-composer-picker';
 import { useSyncedComposerDraft } from '@/hooks/use-synced-composer-draft';
 import { useTheme } from '@/hooks/use-theme';
 import { daemonKeys, inspectBranches } from '@/lib/daemon-api';
+import { composerProviderPrompt } from '@/lib/composer-completion';
 import {
   loadComposerPreferences,
   loadNewTaskExtras,
@@ -214,6 +219,16 @@ export default function NewTaskScreen() {
     carryAcrossTargets: true,
     onHydrate: (synchronized) => setPrompt(synchronized.text),
   });
+  const contextPicker = useComposerPicker({
+    text: prompt,
+    onChangeText: (value) => {
+      draftSync.markEdited();
+      setPrompt(value);
+    },
+    provider,
+    root: selectedProject?.path ?? null,
+    contextKey: selectedProject?.id ?? 'new-task',
+  });
 
   function pick(apply: () => void) {
     return () => {
@@ -257,6 +272,11 @@ export default function NewTaskScreen() {
     setSubmitting(true);
     setError(null);
     try {
+      const commands = value.startsWith('/') ? await contextPicker.getCommands() : [];
+      if (await localCommands.execute(value, commands)) {
+        setSubmitting(false);
+        return;
+      }
       const session = await runtime.createTask(
         selectedProject.id,
         provider,
@@ -270,6 +290,7 @@ export default function NewTaskScreen() {
           runtimeMode,
           baseBranch,
         },
+        composerProviderPrompt(provider, value, commands),
       );
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const address = daemon.activeProfile?.address;
@@ -311,6 +332,26 @@ export default function NewTaskScreen() {
   const activeModel = model
     ? providerModels.find((item) => item.id === model)
     : providerModels.find((item) => item.is_default) ?? providerModels[0];
+  const localCommands = useComposerLocalCommands({
+    provider,
+    model: activeModel,
+    serviceTier,
+    runtimeMode,
+    contextKey: selectedProject?.id ?? 'new-task',
+    onServiceTier: setServiceTier,
+    onGoal: async (operation) => {
+      if (!selectedProject || !provider) throw new Error('Choose a project and model first');
+      const session = await runtime.createTask(selectedProject.id, provider, isolated && !projectless, '', {
+        model, reasoningEffort, serviceTier, contextWindow, runtimeMode, baseBranch,
+      });
+      await runtime.sendGoalOperation(session, operation);
+      router.push({ pathname: '/session/[id]', params: { id: session.id } });
+    },
+    onClear: () => {
+      draftSync.markEdited();
+      setPrompt('');
+    },
+  });
   const modelLabel = !provider
     ? catalog.isPending ? 'Checking agents…' : 'No agents installed'
     : activeModel?.name ?? model ?? providerLabel(provider);
@@ -380,14 +421,21 @@ export default function NewTaskScreen() {
           </View>
         )}
         <ComposerCard
+          {...contextPicker.inputProps}
           accessibilityLabel="Task prompt"
           autoFocus
           editable={!submitting}
           left={(
-            <ComposerAccessMenu
-              mode={runtimeMode}
-              onApply={setRuntimeMode}
-            />
+            <>
+              <ComposerAddMenu
+                disabled={submitting || daemon.phase !== 'connected' || !selectedProject || !provider}
+                onChooseContext={contextPicker.open}
+              />
+              <ComposerAccessMenu
+                mode={runtimeMode}
+                onApply={setRuntimeMode}
+              />
+            </>
           )}
           placeholder={`Work on ${daemon.activeProfile?.name ?? 'your daemon'}`}
           right={(
@@ -408,10 +456,6 @@ export default function NewTaskScreen() {
             </>
           )}
           value={prompt}
-          onChangeText={(value) => {
-            draftSync.markEdited();
-            setPrompt(value);
-          }}
         />
       </View>
 
@@ -513,6 +557,8 @@ export default function NewTaskScreen() {
         onDismiss={() => setProjectPickerOpen(false)}
         onSelect={(project) => setProjectId(project.id)}
       />
+      {localCommands.sheets}
+      <ComposerContextPicker {...contextPicker.picker} />
     </KeyboardAvoidingView>
   );
 }

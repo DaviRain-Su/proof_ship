@@ -3,6 +3,8 @@ import type {
   MessageAttachment,
   Project,
   ProviderKind,
+  ProviderSessionHistory,
+  ProviderSessionSummary,
   RuntimeMode,
   SequencedEvent,
 } from '@waku/client';
@@ -109,6 +111,27 @@ export function createSession(
     transcript_blocks: [],
     turns: [],
     queued_messages: [],
+  };
+}
+
+export function createResumedSession(
+  projectId: string,
+  summary: ProviderSessionSummary,
+  history: ProviderSessionHistory,
+  runtimeMode: RuntimeMode,
+  clock: MobileRuntimeClock,
+): AgentSession {
+  const createdAt = summary.created_at || clock.nowSeconds();
+  const updatedAt = Math.max(summary.updated_at, createdAt);
+  return {
+    ...createSession(projectId, summary.cursor.provider, false, clock, { runtimeMode }),
+    auto_title: summary.title,
+    provider_cursor: summary.cursor,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    last_reply_at: history.messages.length || history.turns.length ? updatedAt : null,
+    messages: history.messages,
+    turns: history.turns,
   };
 }
 

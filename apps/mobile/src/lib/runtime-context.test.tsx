@@ -25,7 +25,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fixture() {
+function fixture(options: { attached?: boolean } = {}) {
   let nextId = 0;
   const clock = {
     nowSeconds: () => 100,
@@ -68,7 +68,27 @@ function fixture() {
         case 'hydrateSession':
           return { type: 'session', session: await hydration.promise };
         case 'attachSession':
-          return { type: 'sessionRuntime', runtimeId: 'runtime', supportsSteer: true };
+          return { type: 'sessionRuntime', runtimeId: options.attached === false ? null : 'runtime', supportsSteer: true };
+        case 'getSettings':
+          return { type: 'settings', settings: {
+            provider_binary_overrides: {}, disabled_providers: [],
+            computer_use_enabled: false, computer_use_allowed_apps: [],
+          } };
+        case 'loadTaskState':
+          return {
+            type: 'taskState',
+            defaultCwd: '/repo',
+            projectlessRoot: null,
+            projects: [{ id: 'project', name: 'Project', path: '/repo', created_at: 0 }],
+            sessions: [history],
+          };
+        case 'probeProvider':
+          return {
+            type: 'providerProbe', version: null,
+            probe: { provider: 'codex', installed: true, path: '/bin/codex', models: [], agent_presets: [] },
+          };
+        case 'start':
+          return { type: 'started', supportsSteer: true };
         case 'saveTaskState':
           return { type: 'taskStateSaved', sessions: command.sessions };
         default:
@@ -110,6 +130,59 @@ function fixture() {
 }
 
 describe('mobile runtime history', () => {
+  test('creates a task with expanded provider text while retaining its slash command for display', async () => {
+    const f = fixture({ attached: false });
+    const session = await f.runtime.createTask('project', 'codex', false, '/deploy production', {}, '$deploy production');
+    cleanups.push(() => f.runtime.deleteSession(session.id));
+    expect(f.commands.find((command) => command.type === 'prompt'))
+      .toMatchObject({ prompt: '$deploy production' });
+    expect(session.messages[0]).toMatchObject({ content: '$deploy production', display_content: '/deploy production' });
+  });
+
+  test('keeps expanded command content separate from display text when steering', async () => {
+    const f = fixture();
+    f.queryClient.setQueryData(f.key, f.history);
+    await f.runtime.attachSession(f.history);
+    await f.runtime.steerPrompt(f.history, '/review changes', [], 'Review changes carefully');
+    expect(f.commands.find((command) => command.type === 'steer'))
+      .toEqual({ type: 'steer', prompt: 'Review changes carefully' });
+    f.emit('steerAccepted', { message: 'Review changes carefully' });
+    expect(f.current().messages.at(-1))
+      .toMatchObject({ content: 'Review changes carefully', display_content: '/review changes' });
+  });
+
+  test('queues expanded command content without starting another provider turn', async () => {
+    const f = fixture();
+    f.queryClient.setQueryData(f.key, f.history);
+    const session = await f.runtime.sendPrompt(f.history, '/review changes', [], 'Review changes carefully');
+    expect(session.queued_messages?.at(-1))
+      .toMatchObject({ content: 'Review changes carefully', display_content: '/review changes' });
+    expect(f.commands.some((command) => command.type === 'prompt')).toBe(false);
+  });
+
+  test('sends a goal operation to a live runtime without adding a prompt', async () => {
+    const f = fixture();
+    f.queryClient.setQueryData(f.key, f.history);
+    await f.runtime.sendGoalOperation(f.history, { kind: 'set', objective: null, status: 'paused', replace: false });
+    expect(f.commands.at(-1)).toEqual({ type: 'goal', operation: { kind: 'set', objective: null, status: 'paused', replace: false } });
+    expect(f.current().messages).toEqual(f.history.messages);
+    expect(f.commands.some((command) => command.type === 'prompt')).toBe(false);
+  });
+
+  test('starts a provider for a fresh goal and applies its native updates', async () => {
+    const f = fixture({ attached: false });
+    const fresh = { ...f.history, messages: [], turns: [], transcript_blocks: [], status: 'idle' as const };
+    f.queryClient.setQueryData(f.key, fresh);
+    await f.runtime.sendGoalOperation(fresh, { kind: 'set', objective: 'Ship mobile', status: 'active', replace: false });
+    expect(f.commands.find((command) => command.type === 'start'))
+      .toMatchObject({ options: { cwd: '/repo', provider: 'codex' } });
+    expect(f.commands.at(-1)).toEqual({ type: 'goal', operation: { kind: 'set', objective: 'Ship mobile', status: 'active', replace: false } });
+    expect(f.commands.some((command) => command.type === 'prompt')).toBe(false);
+    f.emit('goalUpdated', { objective: 'Ship mobile', status: 'active', tokensUsed: 0, timeUsedSeconds: 0 });
+    expect(f.current().thread_goal?.objective).toBe('Ship mobile');
+    expect(f.current().messages).toEqual([]);
+  });
+
   test('preserves history across two desktop steers after attaching from a list placeholder', async () => {
     const f = fixture();
     const loading = f.queryClient.fetchQuery({

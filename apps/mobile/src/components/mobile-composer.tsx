@@ -23,16 +23,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppSymbol } from './app-symbol';
 import { AttachmentTile } from './attachment-tile';
 import { ComposerAccessMenu } from './composer-access-menu';
+import { ComposerContextPicker } from './composer-context-picker';
+import { useComposerLocalCommands } from './composer-command-sheets';
 import {
-  ComposerAttachmentMenu,
+  ComposerAddMenu,
   type ComposerAttachmentSource,
-} from './composer-attachment-menu';
+} from './composer-add-menu';
 import { ComposerTextInput } from './composer-text-input';
 import type { ComposerTextInputProps } from './composer-text-input.types';
 import { GlassSurface, liquidGlass } from './glass-surface';
 import { ModelTraitsSheet } from './session-option-sheets';
 import { MonoFont, NativeTint, Radius } from '@/constants/theme';
-import { useProviderModels } from '@/hooks/use-daemon-data';
+import { useProviderModels, useTaskState } from '@/hooks/use-daemon-data';
+import { useComposerPicker } from '@/hooks/use-composer-picker';
 import { useSyncedComposerDraft } from '@/hooks/use-synced-composer-draft';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -41,7 +44,8 @@ import {
   type LocalAttachmentFile,
 } from '@/lib/attachments';
 import { useDaemon } from '@/lib/daemon-context';
-import { sessionBusy } from '@/lib/mobile-runtime';
+import { sessionBusy, sessionCwd } from '@/lib/mobile-runtime';
+import { composerProviderPrompt } from '@/lib/composer-completion';
 import { modelHasConfigurableTraits } from '@/lib/model-traits';
 import { useRuntime } from '@/lib/runtime-context';
 import { isDaemonDisconnectError } from '@/lib/runtime-errors';
@@ -208,6 +212,8 @@ export function MobileComposer({
     : runtimeError;
   const visibleError = visibleLocalError || visibleRuntimeError;
   const queued = session.queued_messages ?? [];
+  const taskState = useTaskState();
+  const project = taskState.data?.projects.find((item) => item.id === session.project_id);
 
   useEffect(() => setLocalError(null), [session.id]);
   useEffect(() => {
@@ -226,6 +232,31 @@ export function MobileComposer({
       setAttachments(synchronized.attachments);
     },
     flushOnUnmount: true,
+  });
+  const contextPicker = useComposerPicker({
+    text: draft,
+    onChangeText: (value) => {
+      draftSync.markEdited();
+      setDraft(value);
+    },
+    provider: session.provider,
+    root: project ? sessionCwd(session, project) : null,
+    reported: session.available_commands,
+    contextKey: session.id,
+  });
+  const localCommands = useComposerLocalCommands({
+    provider: session.provider,
+    model: activeModel,
+    serviceTier: session.service_tier,
+    runtimeMode: session.runtime_mode,
+    goal: session.thread_goal,
+    contextKey: session.id,
+    onServiceTier: (serviceTier) => runtime.updateSessionOptions(session.id, { serviceTier }),
+    onGoal: (operation) => runtime.sendGoalOperation(session, operation),
+    onClear: () => {
+      draftSync.markEdited();
+      setDraft('');
+    },
   });
   const activeSessionId = useRef(session.id);
   activeSessionId.current = session.id;
@@ -333,10 +364,13 @@ export function MobileComposer({
     ) return;
     setSubmitting(true);
     setLocalError(null);
-    onSubmitted?.();
     try {
-      if (canSteer) await runtime.steerPrompt(session, prompt, submittedAttachments);
-      else await runtime.sendPrompt(session, prompt, submittedAttachments);
+      const commands = prompt.startsWith('/') ? await contextPicker.getCommands() : [];
+      if (await localCommands.execute(prompt, commands)) return;
+      const providerPrompt = composerProviderPrompt(session.provider, prompt, commands, submittedAttachments);
+      onSubmitted?.();
+      if (canSteer) await runtime.steerPrompt(session, prompt, submittedAttachments, providerPrompt);
+      else await runtime.sendPrompt(session, prompt, submittedAttachments, providerPrompt);
       draftSync.removeSubmittedDraft();
       setDraft('');
       setAttachments([]);
@@ -446,6 +480,7 @@ export function MobileComposer({
       ))}
 
       <ComposerCard
+        {...contextPicker.inputProps}
         accessibilityLabel="Message agent"
         beforeInput={attachments.length || importingAttachments ? (
           <ScrollView
@@ -476,9 +511,10 @@ export function MobileComposer({
         editable={!disconnected && !submitting}
         left={(
           <>
-            <ComposerAttachmentMenu
+            <ComposerAddMenu
               disabled={disconnected || submitting || importingAttachments}
               onChoose={(source) => void chooseAttachment(source)}
+              onChooseContext={contextPicker.open}
             />
             <ComposerAccessMenu
               mode={session.runtime_mode}
@@ -529,10 +565,6 @@ export function MobileComposer({
           </>
         )}
         value={draft}
-        onChangeText={(value) => {
-          draftSync.markEdited();
-          setDraft(value);
-        }}
         onPasteError={(message) => {
           setLocalError(message);
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -558,6 +590,8 @@ export function MobileComposer({
           visible={traitsSheetOpen}
         />
       )}
+      {localCommands.sheets}
+      <ComposerContextPicker {...contextPicker.picker} />
     </View>
   );
 }
