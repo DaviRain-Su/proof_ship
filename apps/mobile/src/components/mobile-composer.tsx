@@ -29,8 +29,9 @@ import {
 import { ComposerTextInput } from './composer-text-input';
 import type { ComposerTextInputProps } from './composer-text-input.types';
 import { GlassSurface, liquidGlass } from './glass-surface';
-import { ModelSheet } from './session-option-sheets';
+import { ModelTraitsSheet } from './session-option-sheets';
 import { MonoFont, NativeTint, Radius } from '@/constants/theme';
+import { useProviderModels } from '@/hooks/use-daemon-data';
 import { useSyncedComposerDraft } from '@/hooks/use-synced-composer-draft';
 import { useTheme } from '@/hooks/use-theme';
 import {
@@ -40,6 +41,7 @@ import {
 } from '@/lib/attachments';
 import { useDaemon } from '@/lib/daemon-context';
 import { sessionBusy } from '@/lib/mobile-runtime';
+import { modelHasConfigurableTraits } from '@/lib/model-traits';
 import { useRuntime } from '@/lib/runtime-context';
 import { isDaemonDisconnectError } from '@/lib/runtime-errors';
 
@@ -186,7 +188,12 @@ export function MobileComposer({
   const [importingAttachments, setImportingAttachments] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [modelSheetOpen, setModelSheetOpen] = useState(false);
+  const [traitsSheetOpen, setTraitsSheetOpen] = useState(false);
+  const modelProbe = useProviderModels(session.provider);
+  const models = modelProbe.data?.models ?? [];
+  const activeModel = session.model
+    ? models.find((item) => item.id === session.model)
+    : models.find((item) => item.is_default) ?? models[0];
   const busy = sessionBusy(session);
   const liveRuntime = runtime.runtimes[session.id];
   const canSteer = busy && Boolean(liveRuntime?.supportsSteer) && session.status !== 'connecting';
@@ -504,11 +511,13 @@ export function MobileComposer({
         placeholder={placeholder}
         right={(
           <>
-            <ComposerIconButton
-              icon={{ ios: 'speedometer', android: 'speed', web: 'speed' }}
-              label="Model options"
-              onPress={() => setModelSheetOpen(true)}
-            />
+            {activeModel && modelHasConfigurableTraits(activeModel) && (
+              <ComposerIconButton
+                icon={{ ios: 'speedometer', android: 'speed', web: 'speed' }}
+                label="Model options"
+                onPress={() => setTraitsSheetOpen(true)}
+              />
+            )}
             {busy && (
               <Pressable
                 accessibilityLabel="Stop agent"
@@ -558,15 +567,19 @@ export function MobileComposer({
         }}
       />
 
-      <ModelSheet
-        model={session.model ?? null}
-        onApply={(selection) => applyOptions(selection)}
-        onDismiss={() => setModelSheetOpen(false)}
-        provider={session.provider}
-        reasoningEffort={session.reasoning_effort ?? null}
-        serviceTier={session.service_tier ?? null}
-        visible={modelSheetOpen}
-      />
+      {activeModel && (
+        <ModelTraitsSheet
+          model={activeModel}
+          onApply={applyOptions}
+          onDismiss={() => setTraitsSheetOpen(false)}
+          selection={{
+            reasoningEffort: session.reasoning_effort ?? null,
+            serviceTier: session.service_tier ?? null,
+            contextWindow: session.context_window ?? null,
+          }}
+          visible={traitsSheetOpen}
+        />
+      )}
     </View>
   );
 }

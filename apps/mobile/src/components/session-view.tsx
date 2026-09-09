@@ -20,7 +20,9 @@ import {
 import { ActivitySheetHost } from '@/components/activity-sheet';
 import { ConnectionBanner } from '@/components/connection-banner';
 import { MobileComposer } from '@/components/mobile-composer';
+import { PROVIDER_MENU_ICONS } from '@/components/provider-menu-icons';
 import { RenameDialog } from '@/components/rename-dialog';
+import { ModelSheet, modelDisplayName, type ModelSelection } from '@/components/session-option-sheets';
 import {
   HeaderAction,
   HeaderActionGroup,
@@ -43,7 +45,7 @@ import {
   type TranscriptListHandle,
 } from '@/components/transcript-list';
 import { SessionEmpty } from '@/components/transcript-rows';
-import { useSession, useTaskState } from '@/hooks/use-daemon-data';
+import { useProviderModels, useSession, useTaskState } from '@/hooks/use-daemon-data';
 import { useTheme } from '@/hooks/use-theme';
 import { useDaemon } from '@/lib/daemon-context';
 import { sessionBusy } from '@/lib/mobile-runtime';
@@ -88,8 +90,16 @@ export function SessionView({
   const { openTaskDrawer } = useTaskDrawer();
   const query = useSession(sessionId);
   const session = query.data;
+  const modelProbe = useProviderModels(session?.provider ?? null);
+  const models = modelProbe.data?.models;
+  const modelLabel = modelDisplayName(
+    models,
+    session?.model ?? models?.find((item) => item.is_default)?.id ?? models?.[0]?.id ?? null,
+  );
+  const modelIcon = session ? PROVIDER_MENU_ICONS[session.provider] : undefined;
   const [taskSurface, setTaskSurface] = useState<TaskSurface | null>(null);
   const [taskSurfaceOpen, setTaskSurfaceOpen] = useState(false);
+  const [modelSheetOpen, setModelSheetOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [underHeader, setUnderHeader] = useState(false);
   const [mountedTranscriptSessionId, setMountedTranscriptSessionId] = useState<string | null>(null);
@@ -116,6 +126,7 @@ export function SessionView({
     setUnderHeader(false);
     setTaskSurfaceOpen(false);
     setTaskSurface(null);
+    setModelSheetOpen(false);
   }, [session?.id]);
 
   // Route/header/composer get the first commit by themselves. Transcript row
@@ -171,6 +182,14 @@ export function SessionView({
     setTaskSurfaceOpen(true);
   }, []);
 
+  const applyModelSelection = useCallback((selection: ModelSelection) => {
+    const current = sessionRef.current;
+    if (!current) return;
+    void runtimeRef.current.updateSessionOptions(current.id, selection).catch((cause) => {
+      Alert.alert('Couldn’t change model', cause instanceof Error ? cause.message : String(cause));
+    });
+  }, []);
+
   const copyLastResponse = useCallback(async () => {
     const lastAssistant = [...(sessionRef.current?.messages ?? [])]
       .reverse()
@@ -210,6 +229,8 @@ export function SessionView({
     (command: string) => {
       if (command === 'terminal' || command === 'files' || command === 'review') {
         openTaskSurface(command);
+      } else if (command === 'model') {
+        setModelSheetOpen(true);
       } else if (command === 'rename') {
         setRenaming(true);
       } else if (command === 'copy-last-response') {
@@ -250,15 +271,18 @@ export function SessionView({
         id: 'task-actions',
         title: '',
         displayInline: true,
-        subactions: TASK_MENU_COMMANDS.map((item) => ({
-          id: item.id,
-          title: item.title,
-          image: item.symbol,
-          attributes: item.destructive ? { destructive: true } : undefined,
-        })),
+        subactions: [
+          { id: 'model', title: modelLabel, image: modelIcon, imageColor: theme.text },
+          ...TASK_MENU_COMMANDS.map((item) => ({
+            id: item.id,
+            title: item.title,
+            image: item.symbol,
+            attributes: item.destructive ? { destructive: true } : undefined,
+          })),
+        ],
       },
     ],
-    [],
+    [modelIcon, modelLabel, theme.text],
   );
 
   // The chrome lives in the native navigation bar, so it stays put while the
@@ -299,13 +323,21 @@ export function SessionView({
                   label: '',
                   inline: true,
                   multiselectable: true,
-                  items: TASK_MENU_COMMANDS.map((item) => ({
-                    type: 'action' as const,
-                    label: item.title,
-                    icon: { type: 'sfSymbol' as const, name: item.symbol },
-                    destructive: item.destructive,
-                    onPress: () => handleTaskMenuCommand(item.id),
-                  })),
+                  items: [
+                    {
+                      type: 'action',
+                      label: modelLabel,
+                      icon: modelIcon ? { type: 'image', source: modelIcon } : undefined,
+                      onPress: () => handleTaskMenuCommand('model'),
+                    },
+                    ...TASK_MENU_COMMANDS.map((item) => ({
+                      type: 'action' as const,
+                      label: item.title,
+                      icon: { type: 'sfSymbol' as const, name: item.symbol },
+                      destructive: item.destructive,
+                      onPress: () => handleTaskMenuCommand(item.id),
+                    })),
+                  ],
                 },
               ],
             },
@@ -354,7 +386,7 @@ export function SessionView({
           ]
         : undefined,
     };
-  }, [handleTaskMenuCommand, hasSession, openTaskDrawer, subtitle, taskMenuActions, title]);
+  }, [handleTaskMenuCommand, hasSession, modelIcon, modelLabel, openTaskDrawer, subtitle, taskMenuActions, title]);
 
   return (
     <KeyboardAvoidingView
@@ -411,6 +443,16 @@ export function SessionView({
           session={session}
           surface={taskSurface}
           visible={taskSurfaceOpen}
+        />
+      )}
+      {session && (
+        <ModelSheet
+          key={`model-sheet:${session.id}`}
+          model={session.model ?? null}
+          onApply={applyModelSelection}
+          onDismiss={() => setModelSheetOpen(false)}
+          provider={session.provider}
+          visible={modelSheetOpen}
         />
       )}
       {session && (

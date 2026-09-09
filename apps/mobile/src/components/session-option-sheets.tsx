@@ -9,7 +9,6 @@ import {
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import Animated, {
   Easing,
@@ -24,6 +23,7 @@ import { ProviderIcon } from './provider-icon';
 import { Sheet, SheetRow } from './sheet';
 import { NativeTint, Radius } from '@/constants/theme';
 import { useAllProviderModels, useProviderModels } from '@/hooks/use-daemon-data';
+import { useModelSheetListHeight } from '@/hooks/use-model-sheet-list-height';
 import { useTheme } from '@/hooks/use-theme';
 import {
   resolveModelTraitSelection,
@@ -35,7 +35,6 @@ import { providerLabel, runtimeModeLabel } from '@/lib/session-presentation';
 export interface ModelSelection {
   model: string | null;
   reasoningEffort: string | null;
-  serviceTier: string | null;
 }
 
 export function modelDisplayName(
@@ -46,29 +45,34 @@ export function modelDisplayName(
   return models?.find((item) => item.id === model)?.name ?? model;
 }
 
-/** Model, reasoning-effort, and service-tier picker backed by the daemon's model discovery. */
+/** Current-provider model picker opened from the task header. */
 export function ModelSheet({
   visible,
   onDismiss,
   provider,
   model,
-  reasoningEffort,
-  serviceTier,
   onApply,
 }: {
   visible: boolean;
   onDismiss: () => void;
   provider: ProviderKind;
   model: string | null;
-  reasoningEffort: string | null;
-  serviceTier: string | null;
-  onApply: (selection: Partial<ModelSelection>) => void;
+  onApply: (selection: ModelSelection) => void;
 }) {
   const theme = useTheme();
-  const probe = useProviderModels(visible ? provider : null);
+  const listHeight = useModelSheetListHeight(visible);
+  const probe = useProviderModels(provider);
+  const [search, setSearch] = useState('');
   const models = probe.data?.models ?? [];
-  const selected = model ? models.find((item) => item.id === model) : models.find((item) => item.is_default);
-  const efforts = selected?.reasoning_efforts ?? [];
+  const defaultModel = models.find((item) => item.is_default) ?? models[0];
+  const items = useMemo(
+    () => filterModels(probe.data?.models, search),
+    [probe.data?.models, search],
+  );
+
+  useEffect(() => {
+    if (visible) setSearch('');
+  }, [provider, visible]);
 
   function pickModel(next: ProviderModel) {
     void Haptics.selectionAsync();
@@ -76,11 +80,15 @@ export function ModelSheet({
       model: next.id,
       reasoningEffort: next.default_reasoning_effort ?? null,
     });
-    if (!next.reasoning_efforts.length && !next.service_tiers.length) onDismiss();
+    onDismiss();
   }
 
   return (
-    <Sheet onDismiss={onDismiss} title={`${providerLabel(provider)} model`} visible={visible}>
+    <Sheet
+      onDismiss={onDismiss}
+      scrollable={false}
+      visible={visible}>
+      <ModelSearchField onChangeText={setSearch} value={search} />
       {probe.isPending ? (
         <View style={styles.loading}>
           <ActivityIndicator color={theme.textTertiary} />
@@ -90,53 +98,30 @@ export function ModelSheet({
           {probe.error instanceof Error ? probe.error.message : String(probe.error)}
         </Text>
       ) : (
-        <>
-          {models.map((item) => (
+        <BottomSheetFlatList
+          data={items}
+          extraData={model}
+          initialNumToRender={14}
+          keyExtractor={(item) => item.id}
+          keyboardShouldPersistTaps="handled"
+          renderItem={({ item }) => (
             <SheetRow
               description={item.sub_provider ?? undefined}
-              key={item.id}
               label={item.name}
               onPress={() => pickModel(item)}
-              selected={model === item.id || (!model && item.is_default)}
+              selected={model === item.id || (!model && defaultModel?.id === item.id)}
             />
-          ))}
-          {!models.length && (
+          )}
+          showsVerticalScrollIndicator={false}
+          style={{ height: listHeight }}
+          ListEmptyComponent={(
             <Text style={[styles.note, { color: theme.textTertiary }]}>
-              This agent doesn’t expose a model list; it will use its own default.
+              {search.trim()
+                ? 'No models match your search.'
+                : 'This agent doesn’t expose a model list; it will use its own default.'}
             </Text>
           )}
-          {efforts.length ? (
-            <>
-              <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
-                REASONING EFFORT
-              </Text>
-              {efforts.map((effort) => (
-                <SheetRow
-                  description={effort.description ?? undefined}
-                  key={effort.id}
-                  label={effort.label}
-                  onPress={() => {
-                    void Haptics.selectionAsync();
-                    onApply({ model: selected?.id ?? model, reasoningEffort: effort.id });
-                    onDismiss();
-                  }}
-                  selected={(reasoningEffort ?? selected?.default_reasoning_effort) === effort.id}
-                />
-              ))}
-            </>
-          ) : null}
-          {selected && (
-            <ServiceTierOptions
-              model={selected}
-              onApply={(tier) => {
-                void Haptics.selectionAsync();
-                onApply({ serviceTier: tier });
-                onDismiss();
-              }}
-              serviceTier={serviceTier}
-            />
-          )}
-        </>
+        />
       )}
     </Sheet>
   );
@@ -144,7 +129,7 @@ export function ModelSheet({
 
 /** All model-advertised options in one sheet. Unlike single-choice pickers,
  * it stays open after a choice so effort, tier, and context can be configured
- * together before starting a task. */
+ * together. */
 export function ModelTraitsSheet({
   visible,
   onDismiss,
@@ -286,7 +271,7 @@ export function ModelPickerSheet({
   onApply: (selection: ProviderModelSelection) => void;
 }) {
   const theme = useTheme();
-  const { height: windowHeight } = useWindowDimensions();
+  const listHeight = useModelSheetListHeight(visible);
   const catalog = useAllProviderModels(visible ? providers : []);
   const [browsing, setBrowsing] = useState<ProviderKind | null>(provider);
   const [search, setSearch] = useState('');
@@ -315,17 +300,10 @@ export function ModelPickerSheet({
   const entry = catalog.find((item) => item.id === browsing);
   const preferredModelId = entry?.models.find((item) => item.is_default)?.id
     ?? entry?.models[0]?.id;
-  const listHeight = Math.round(windowHeight * 0.48);
-  const items = useMemo<ProviderModel[]>(() => {
-    const query = search.trim().toLocaleLowerCase();
-    const models = entry?.models ?? [];
-    if (!query) return models;
-    return models.filter((item) => (
-      item.name.toLocaleLowerCase().includes(query) ||
-        item.id.toLocaleLowerCase().includes(query) ||
-        item.sub_provider?.toLocaleLowerCase().includes(query)
-    ));
-  }, [entry?.models, search]);
+  const items = useMemo(
+    () => filterModels(entry?.models, search),
+    [entry?.models, search],
+  );
 
   function pickModel(next: ProviderModel) {
     if (!browsing) return;
@@ -391,38 +369,7 @@ export function ModelPickerSheet({
                 {browsing ? providerLabel(browsing) : 'Provider'}
               </Text>
             </Pressable>
-            <View style={[styles.searchField, { backgroundColor: theme.overlayStrong }]}>
-              <AppSymbol
-                name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
-                size={14}
-                tintColor={theme.textTertiary}
-              />
-              <TextInput
-                accessibilityLabel="Search models"
-                autoCapitalize="none"
-                autoCorrect={false}
-                placeholder="Search models"
-                placeholderTextColor={theme.textTertiary}
-                selectionColor={NativeTint}
-                style={[styles.searchInput, { color: theme.text }]}
-                value={search}
-                onChangeText={setSearch}
-              />
-              {search.length > 0 && (
-                <Pressable
-                  accessibilityLabel="Clear search"
-                  accessibilityRole="button"
-                  hitSlop={8}
-                  onPress={() => setSearch('')}
-                  style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}>
-                  <AppSymbol
-                    name={{ ios: 'xmark.circle.fill', android: 'cancel', web: 'cancel' }}
-                    size={15}
-                    tintColor={theme.textTertiary}
-                  />
-                </Pressable>
-              )}
-            </View>
+            <ModelSearchField onChangeText={setSearch} value={search} />
             {entry?.isPending ? (
               <View style={[styles.loading, { height: listHeight }]}>
                 <ActivityIndicator color={theme.textTertiary} />
@@ -457,6 +404,61 @@ export function ModelPickerSheet({
         </Animated.View>
       </View>
     </Sheet>
+  );
+}
+
+function filterModels(models: ProviderModel[] | undefined, search: string): ProviderModel[] {
+  if (!models) return [];
+  const query = search.trim().toLocaleLowerCase();
+  if (!query) return models;
+  return models.filter((item) => (
+    item.name.toLocaleLowerCase().includes(query) ||
+      item.id.toLocaleLowerCase().includes(query) ||
+      item.sub_provider?.toLocaleLowerCase().includes(query)
+  ));
+}
+
+function ModelSearchField({
+  value,
+  onChangeText,
+}: {
+  value: string;
+  onChangeText: (value: string) => void;
+}) {
+  const theme = useTheme();
+  return (
+    <View style={[styles.searchField, { backgroundColor: theme.overlayStrong }]}>
+      <AppSymbol
+        name={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
+        size={14}
+        tintColor={theme.textTertiary}
+      />
+      <TextInput
+        accessibilityLabel="Search models"
+        autoCapitalize="none"
+        autoCorrect={false}
+        placeholder="Search models"
+        placeholderTextColor={theme.textTertiary}
+        selectionColor={NativeTint}
+        style={[styles.searchInput, { color: theme.text }]}
+        value={value}
+        onChangeText={onChangeText}
+      />
+      {value.length > 0 && (
+        <Pressable
+          accessibilityLabel="Clear search"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={() => onChangeText('')}
+          style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}>
+          <AppSymbol
+            name={{ ios: 'xmark.circle.fill', android: 'cancel', web: 'cancel' }}
+            size={15}
+            tintColor={theme.textTertiary}
+          />
+        </Pressable>
+      )}
+    </View>
   );
 }
 
