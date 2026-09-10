@@ -157,7 +157,7 @@ settings.daemon:
 settings.computer_use:
   en: Computer Use
 settings.general_keywords:
-  en: general local projects conversations privacy analytics telemetry anonymous sharing updates automatic sparkle version
+  en: general local projects conversations privacy analytics telemetry anonymous sharing updates automatic sparkle version math latex formula expression
 settings.appearance_keywords:
   en: appearance theme system light dark language english chinese simplified font size text editor
 settings.providers_keywords:
@@ -318,6 +318,10 @@ settings.code_font_size:
   en: Code font size
 settings.code_font_size_description:
   en: Text size in the file editor, diffs, code blocks, and tool output
+settings.render_math:
+  en: Render math expressions
+settings.render_math_description:
+  en: Show formatted math in Markdown. Turn off to show LaTeX source.
 settings.theme_system:
   en: System
 settings.theme_light:
@@ -567,6 +571,8 @@ common.copy_to_composer:
   en: Copy to Composer
 common.copy_code:
   en: Copy Code
+common.copy_expression:
+  en: Copy Expression
 common.cancel:
   en: Cancel
 common.send:
