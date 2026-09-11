@@ -208,7 +208,7 @@ providers.checked_just_now: 刚刚检查过
 providers.checked_minutes_ago: "%{count} 分钟前检查过"
 providers.checked_hours_ago: "%{count} 小时前检查过"
 computer_use.allow_apps: 允许 Waku 操作其他应用
-computer_use.availability: Codex、OpenCode、Grok 和 Pi 支持电脑操作功能
+computer_use.availability: Codex、OpenCode、OpenCode 2、Grok 和 Pi 支持电脑操作功能
 computer_use.macos_access: macOS 权限
 computer_use.helper_access: 请向 Waku 的独立控制助手 %{helper} 授予权限
 computer_use.screen_recording: 屏幕录制
@@ -315,6 +315,8 @@ activity.action_plan: 计划
 activity.action_use: 使用
 activity.ask_questions: 提问
 activity.arguments: 参数
+activity.tool_name: 工具
+activity.mcp_server: MCP 服务器
 activity.output: 输出
 activity.image_output: 图片输出
 activity.open_file: 打开文件
@@ -432,7 +434,6 @@ computer_use.no_bundle_id: 此应用没有 Bundle ID，因此无法设为始终�
 computer_use.stopped: 已停止
 computer_use.controlling: 正在控制
 computer_use.captured: 已截取
-computer_use.take_control: 接管
 computer_use.preparing_preview: 正在准备预览…
 common.deny: 拒绝
 permission.allow_once: 仅允许一次

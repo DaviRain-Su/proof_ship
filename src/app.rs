@@ -226,7 +226,7 @@ impl SettingsPage {
     /// its navigation entry points. Keeping this decision on the page itself
     /// makes the Settings sidebar and command palette use the same gate.
     fn is_visible_in_navigation(self) -> bool {
-        self != Self::ComputerUse || cfg!(all(debug_assertions, target_os = "macos"))
+        self != Self::ComputerUse || cfg!(debug_assertions)
     }
 }
 
@@ -932,7 +932,8 @@ struct ComputerUsePreview {
     target: Option<ComputerTarget>,
     phase: ComputerUsePhase,
     visible: bool,
-    screenshot: Option<Arc<gpui::Image>>,
+    frames: crate::computer_use::PreviewFrames<crate::computer_use::PreviewImage>,
+    decode_task: Option<gpui::Task<()>>,
 }
 
 #[derive(Debug, Default)]
@@ -1349,6 +1350,8 @@ pub struct Waku {
     right_panel_rendered_width: f32,
     fps_counter_visible: bool,
     panel_resize_drag: Option<PanelResizeDrag>,
+    /// Window-relative PiP position, independent of incoming preview frames.
+    computer_use_preview_position: Option<gpui::Point<Pixels>>,
     right_panel_session_states: HashMap<Uuid, RightPanelSessionState>,
     right_panel_surfaces: Vec<RightPanelSurface>,
     right_panel_active_surface: Option<usize>,
@@ -2874,6 +2877,7 @@ impl Waku {
                 },
                 fps_counter_visible: false,
                 panel_resize_drag: None,
+                computer_use_preview_position: None,
                 right_panel_session_states: HashMap::new(),
                 right_panel_surfaces: Vec::new(),
                 right_panel_active_surface: None,

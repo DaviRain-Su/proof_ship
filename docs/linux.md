@@ -44,10 +44,10 @@ The archive uses an install-prefix layout (`bin/`, `share/`) beneath one
 versioned directory, so `--strip-components=1` into a prefix such as
 `/usr/local` works too.
 
-**Keep `bin/` intact.** Waku launches `waku-daemon` and `waku-updater` from its
-own directory, so copying `bin/waku` somewhere on its own leaves it unable to
-start the daemon or update. A symlink is fine — Waku resolves it back to the
-real path.
+**Keep `bin/` and `share/waku/` intact.** Waku launches its daemon, updater,
+and Computer Use helpers from `bin/`; the SDK library and supporting resources
+ship in the same installation. A symlink is fine — Waku resolves it back to
+the real path.
 
 Installing the desktop entry is the part that matters — it is how the app is
 launched normally, and it is what associates the running window with its icon
@@ -99,7 +99,8 @@ and settings stay in `~/.waku`; delete that directory to remove them too.
 ## Building from source
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for build prerequisites, then
-produce the same archive this page installs with:
+install Bun for the SDK artifact assembler, then produce the same archive
+this page installs with:
 
 ```sh
 ./scripts/bundle-linux.sh
@@ -111,6 +112,13 @@ To exercise the install script against that local build:
 WAKU_BUNDLE_PATH=target/release/waku-<version>-<target>.tar.gz \
   sh website/public/install.sh
 ```
+
+## Computer Use
+
+Debug builds expose Computer Use through the bundled Cua Driver SDK. X11 and
+AT-SPI use the current desktop session; native Wayland support is experimental
+and depends on compositor integrations. See [Computer Use](computer-use.md)
+for capability checks, packaged helper files, and limitations.
 
 ## Running in a virtual machine
 

@@ -217,7 +217,7 @@ providers.checked_minutes_ago: "%{count} 分前に確認済み"
 providers.checked_hours_ago: "%{count} 時間前に確認済み"
 
 computer_use.allow_apps: Waku にアプリの操作を許可
-computer_use.availability: コンピュータ操作は Codex、OpenCode、Grok、Pi で利用できます
+computer_use.availability: コンピュータ操作は Codex、OpenCode、OpenCode 2、Grok、Pi で利用できます
 computer_use.macos_access: macOS のアクセス権
 computer_use.helper_access: Waku の分離された操作ヘルパー %{helper} にアクセスを許可してください
 computer_use.screen_recording: 画面収録
@@ -333,6 +333,8 @@ activity.action_plan: 計画
 activity.action_use: 使用
 activity.ask_questions: 質問する
 activity.arguments: 引数
+activity.tool_name: ツール
+activity.mcp_server: MCP サーバー
 activity.output: 出力
 activity.image_output: 画像出力
 activity.open_file: ファイルを開く
@@ -453,7 +455,6 @@ computer_use.no_bundle_id: このアプリには Bundle ID がないため、常
 computer_use.stopped: 停止しました
 computer_use.controlling: 操作中
 computer_use.captured: キャプチャ済み
-computer_use.take_control: 操作を引き継ぐ
 computer_use.preparing_preview: プレビューを準備中…
 
 common.deny: 拒否

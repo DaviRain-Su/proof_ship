@@ -1396,6 +1396,8 @@ pub(super) fn activity_file_change_stats(activity: &ActivityItem) -> Option<(u64
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum ActivityDisclosureSectionKind {
+    McpServer,
+    ToolName,
     Command,
     Arguments,
     Output,
@@ -1405,6 +1407,8 @@ pub(super) enum ActivityDisclosureSectionKind {
 impl ActivityDisclosureSectionKind {
     pub(super) fn id(self) -> &'static str {
         match self {
+            Self::McpServer => "mcp-server",
+            Self::ToolName => "tool-name",
             Self::Command => "command",
             Self::Arguments => "arguments",
             Self::Output => "output",
@@ -1414,6 +1418,8 @@ impl ActivityDisclosureSectionKind {
 
     pub(super) fn label(self) -> Option<String> {
         match self {
+            Self::McpServer => Some(tr!("activity.mcp_server")),
+            Self::ToolName => Some(tr!("activity.tool_name")),
             Self::Command => Some(tr!("activity.command_detail")),
             Self::Arguments => Some(tr!("activity.arguments")),
             Self::Output => Some(tr!("activity.output")),
@@ -1432,6 +1438,24 @@ pub(super) fn activity_disclosure_sections(
     activity: &ActivityItem,
 ) -> Vec<ActivityDisclosureSection> {
     let mut sections = Vec::new();
+    for (kind, content) in [
+        (
+            ActivityDisclosureSectionKind::McpServer,
+            activity.mcp_server.as_deref(),
+        ),
+        (
+            ActivityDisclosureSectionKind::ToolName,
+            activity.tool_name.as_deref(),
+        ),
+    ] {
+        if let Some(content) = content.map(str::trim).filter(|content| !content.is_empty()) {
+            sections.push(ActivityDisclosureSection {
+                kind,
+                content: content.to_owned(),
+            });
+        }
+    }
+    let metadata_count = sections.len();
     if activity.kind == ActivityKind::Command {
         if let Some(command) = activity
             .arguments
@@ -1495,7 +1519,7 @@ pub(super) fn activity_disclosure_sections(
             content: String::new(),
         });
     }
-    if sections.is_empty()
+    if sections.len() == metadata_count
         && let Some(detail) = activity
             .detail
             .as_deref()
@@ -1607,6 +1631,63 @@ mod message_time_tests {
                 format_message_time_at(unix_seconds(local_datetime(2026, 5, day, 9, 0)), now);
             assert!(formatted.starts_with(&format!("May {day}{suffix},")));
         }
+    }
+
+    #[test]
+    fn activity_disclosure_distinguishes_mcp_identity_from_the_title() {
+        let activity = ActivityItem::new(
+            Some("tool-1".into()),
+            crate::model::ActivityKind::Tool,
+            "List running apps via CUA",
+            None,
+            true,
+        )
+        .with_tool_name(Some("js"))
+        .with_mcp_server(Some("waku_js_repl"))
+        .with_arguments(Some("{}".into()));
+        assert_eq!(
+            activity_display_title(&activity),
+            "List running apps via CUA"
+        );
+        assert_eq!(
+            activity_disclosure_sections(&activity),
+            vec![
+                ActivityDisclosureSection {
+                    kind: ActivityDisclosureSectionKind::McpServer,
+                    content: "waku_js_repl".into()
+                },
+                ActivityDisclosureSection {
+                    kind: ActivityDisclosureSectionKind::ToolName,
+                    content: "js".into()
+                },
+                ActivityDisclosureSection {
+                    kind: ActivityDisclosureSectionKind::Arguments,
+                    content: "{}".into()
+                },
+            ]
+        );
+
+        let regular = ActivityItem::new(
+            None,
+            crate::model::ActivityKind::Tool,
+            "Read notes",
+            Some("Could not read notes".into()),
+            true,
+        )
+        .with_tool_name(Some("read_file"));
+        assert_eq!(
+            activity_disclosure_sections(&regular),
+            vec![
+                ActivityDisclosureSection {
+                    kind: ActivityDisclosureSectionKind::ToolName,
+                    content: "read_file".into()
+                },
+                ActivityDisclosureSection {
+                    kind: ActivityDisclosureSectionKind::Detail,
+                    content: "Could not read notes".into()
+                },
+            ]
+        );
     }
 
     #[test]

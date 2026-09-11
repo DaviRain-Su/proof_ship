@@ -1539,7 +1539,7 @@ impl Waku {
         cx.notify();
     }
 
-    pub(super) fn bring_computer_use_to_front(&mut self, window_id: u32, cx: &mut Context<Self>) {
+    pub(super) fn bring_computer_use_to_front(&mut self, window_id: u64, cx: &mut Context<Self>) {
         if let Some(runtime) = self
             .state
             .selected_session
@@ -1557,18 +1557,24 @@ impl Waku {
         cx.notify();
     }
 
-    pub(super) fn dismiss_computer_use(&mut self, window_id: u32, cx: &mut Context<Self>) {
+    pub(super) fn dismiss_computer_use(&mut self, window_id: u64, cx: &mut Context<Self>) {
         if let Some(runtime) = self
             .state
             .selected_session
             .and_then(|session_id| self.runtimes.get_mut(&session_id))
         {
-            runtime.computer_use_previews.retain(|preview| {
+            if let Some(preview) = runtime.computer_use_previews.iter_mut().find(|preview| {
                 preview
                     .target
                     .as_ref()
-                    .is_none_or(|target| target.window_id != window_id)
-            });
+                    .is_some_and(|target| target.window_id == window_id)
+            }) {
+                // Keep the hidden entry until the turn ends so the next
+                // screenshot cannot reopen a preview the user just closed.
+                preview.visible = false;
+                preview.decode_task = None;
+                preview.frames = Default::default();
+            }
         }
         cx.notify();
     }

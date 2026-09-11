@@ -2315,6 +2315,31 @@ impl Waku {
                 for section in sections {
                     let section_kind = section.kind;
                     let content = section.content;
+                    if matches!(
+                        section_kind,
+                        ActivityDisclosureSectionKind::McpServer
+                            | ActivityDisclosureSectionKind::ToolName
+                    ) {
+                        detail_card = detail_card.child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .items_start()
+                                .gap(px(8.0))
+                                .child(div().flex_none().text_color(theme.text_tertiary).child(
+                                    format!("{}:", section_kind.label().unwrap_or_default()),
+                                ))
+                                .child(div().flex_1().min_w_0().child(md::render::plain_text(
+                                    content,
+                                    md::render::MONO_FAMILY,
+                                    FontWeight::NORMAL,
+                                    theme.text_secondary,
+                                    &ctx,
+                                ))),
+                        );
+                        continue;
+                    }
                     let mut section_view = div().w_full().min_w_0().flex().flex_col().gap(px(3.0));
                     if let Some(label) = section_kind.label() {
                         let copy_content = content.clone();

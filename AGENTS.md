@@ -92,6 +92,10 @@
   native macOS conventions.
 - Explicit user screenshots and feedback override a previous or merely
   "consistent" treatment.
+- GPUI's `overflow_hidden` clips descendants to a rectangle, not the parent's
+  rounded corners. Give child backgrounds, hover overlays, and images that
+  reach a rounded edge their own matching corner radii, accounting for the
+  parent's border inset. Parent rounding alone does not clip child paint.
 - For provider-native content such as citations, reasoning, and tool events,
   verify the real provider payload and preserve its ordering. Never expose
   private provider control markers in the transcript.

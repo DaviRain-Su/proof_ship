@@ -14,10 +14,12 @@ staging="$(mktemp -d)"
 trap 'rm -rf -- "$staging"' EXIT
 
 cargo build --locked --release \
-  --package waku --bin waku --bin waku-updater \
-  --package waku-daemon --bin waku-daemon
+  --package waku --bin waku --bin waku-updater --bin waku_js_repl \
+  --package waku-daemon --bin waku-daemon \
+  --package waku-computer-use --bin waku_computer_use
 
 package_dir="$staging/$package"
+bun scripts/cua-driver.ts bundle "$package_dir/bin" "$package_dir/share/waku" release
 install -Dm755 "$target_dir/release/waku" "$package_dir/bin/waku"
 install -Dm755 "$target_dir/release/waku-updater" "$package_dir/bin/waku-updater"
 install -Dm755 "$target_dir/release/waku-daemon" "$package_dir/bin/waku-daemon"

@@ -67,7 +67,7 @@ pub struct ComputerPermissions {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ComputerTarget {
-    pub window_id: u32,
+    pub window_id: u64,
     pub bundle_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_id: Option<String>,

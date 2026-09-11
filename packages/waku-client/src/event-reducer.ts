@@ -444,6 +444,8 @@ function upsertActivity(
     Object.assign(matching, {
       ...incoming,
       id: matching.id,
+      tool_name: incoming.tool_name ?? matching.tool_name,
+      mcp_server: incoming.mcp_server ?? matching.mcp_server,
       detail: incoming.detail ?? matching.detail,
       arguments: incoming.arguments ?? matching.arguments,
       output: incoming.output ?? matching.output,

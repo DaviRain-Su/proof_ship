@@ -167,7 +167,7 @@ impl CodexComputerUseConfig {
 }
 
 /// Register Waku's long-lived QuickJS MCP server and keep the raw native helper
-/// private behind its built-in `sky` object. Codex sees only the compact
+/// private behind its built-in `cua` object. Codex sees only the compact
 /// `js` / `js_reset` execution surface.
 fn configure_computer_use_command(command: &mut Command, config: Option<&CodexComputerUseConfig>) {
     if let Some(config) = config {
@@ -1869,6 +1869,8 @@ fn handle_codex_message(
                         detail,
                         complete,
                     )
+                    .with_tool_name(item.get("tool").and_then(Value::as_str))
+                    .with_mcp_server(item.get("server").and_then(Value::as_str))
                     .with_arguments(codex_item_arguments(item))
                     .with_activity_source(Some(item))
                     .with_output(output)
@@ -3024,7 +3026,7 @@ mod tests {
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         // The raw helper must never be registered as a Codex MCP server: the
-        // Waku REPL owns it and exposes only `sky` inside JavaScript.
+        // Waku REPL owns it and exposes only `cua` inside JavaScript.
         assert!(
             !enabled_arguments
                 .iter()
@@ -3510,6 +3512,49 @@ mod tests {
     }
 
     #[test]
+    fn mcp_activity_keeps_native_server_and_tool_names() {
+        let thread_id = Mutex::new(Some("thread-1".to_owned()));
+        let turn_id = Mutex::new(Some("turn-9".to_owned()));
+        let turn_ids = Mutex::new(vec!["turn-9".to_owned()]);
+        let pending_rollbacks = Mutex::new(HashMap::new());
+        let pending_steers = Mutex::new(HashMap::new());
+        let background_rpcs = Mutex::new(BackgroundRpcState::default());
+        let goal_rpcs = Mutex::new(GoalRpcState::default());
+        let (goal_commands, _goal_command_rx) = unbounded();
+        let (event_tx, event_rx) = unbounded();
+        let mut stream_state = CodexStreamState::default();
+        for method in ["item/started", "item/completed"] {
+            handle_codex_message(
+                json!({
+                    "method": method, "params": {
+                        "threadId": "thread-1", "turnId": "turn-9", "item": {
+                            "id": "cua-call", "type": "mcpToolCall", "server": "waku_js_repl", "tool": "js",
+                            "arguments": {"title": "List running apps via CUA", "code": "cua.list_apps()"}
+                        }
+                    }
+                }),
+                &thread_id,
+                &turn_id,
+                &turn_ids,
+                &pending_rollbacks,
+                &pending_steers,
+                &background_rpcs,
+                &goal_rpcs,
+                &goal_commands,
+                &event_tx,
+                &mut stream_state,
+            );
+            let DriverEvent::RichActivity(item) = event_rx.try_recv().unwrap() else {
+                panic!("expected a tool activity");
+            };
+            assert_eq!(item.title, "List running apps via CUA");
+            assert_eq!(item.tool_name.as_deref(), Some("js"));
+            assert_eq!(item.mcp_server.as_deref(), Some("waku_js_repl"));
+            assert_eq!(item.complete, method == "item/completed");
+        }
+    }
+
+    #[test]
     fn mcp_tool_title_prefers_the_human_facing_argument() {
         let titled = json!({
             "type": "mcpToolCall",
@@ -3517,14 +3562,14 @@ mod tests {
             "tool": "js",
             "arguments": {
                 "title": "Inspect Helium browser",
-                "code": "sky.get_app_state({ app: 'Helium' })"
+                "code": "cua.list_windows({})"
             }
         });
         let untitled = json!({
             "type": "mcpToolCall",
             "server": "waku_js_repl",
             "tool": "js",
-            "arguments": { "code": "sky.list_apps()" }
+            "arguments": { "code": "cua.list_apps()" }
         });
 
         assert_eq!(codex_item_title(&titled), "Inspect Helium browser");

@@ -1486,16 +1486,19 @@ fn handle_message(
                                 (kind, title.clone(), wire_title.clone(), command),
                             );
                         }
-                        let _ = events.send(DriverEvent::RichActivity(activity::tool_activity(
-                            id,
-                            kind,
-                            title,
-                            block.get("input"),
-                            None,
-                            None,
-                            false,
-                            false,
-                        )));
+                        let _ = events.send(DriverEvent::RichActivity(
+                            activity::tool_activity(
+                                id,
+                                kind,
+                                title,
+                                block.get("input"),
+                                None,
+                                None,
+                                false,
+                                false,
+                            )
+                            .with_tool_name(block.get("name").and_then(Value::as_str)),
+                        ));
                     }
                     _ => {}
                 }
@@ -1527,15 +1530,10 @@ fn handle_message(
                     .get("tool_use_id")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
-                let (kind, title, _, _) = id
+                let (kind, title, wire_name, _) = id
                     .as_ref()
                     .and_then(|id| state.tools.remove(id))
-                    .unwrap_or((
-                        ActivityKind::Tool,
-                        "Tool".to_owned(),
-                        "Tool".to_owned(),
-                        None,
-                    ));
+                    .unwrap_or((ActivityKind::Tool, "Tool".to_owned(), String::new(), None));
                 let failed = block.get("is_error").and_then(Value::as_bool) == Some(true);
                 // The result text of an edit is only a confirmation sentence.
                 // The positioned hunks Claude actually applied ride alongside
@@ -1555,7 +1553,8 @@ fn handle_message(
                     failed,
                     true,
                 )
-                .with_activity_source(patch);
+                .with_activity_source(patch)
+                .with_tool_name(Some(&wire_name));
                 let _ = events.send(DriverEvent::RichActivity(item));
             }
         }

@@ -426,7 +426,13 @@ providers.checked_hours_ago:
 computer_use.allow_apps:
   en: Let Waku use apps
 computer_use.availability:
-  en: Computer Use is available with Codex, OpenCode, Grok, and Pi
+  en: Computer Use is available with Codex, OpenCode, OpenCode 2, Grok, and Pi
+computer_use.desktop_access:
+  en: Desktop access
+computer_use.windows_access_description:
+  en: Control apps in your current Windows desktop session. Windows may restrict access to elevated apps and secure desktops.
+computer_use.linux_access_description:
+  en: Control apps in your current Linux desktop session. Capture and input support depend on your compositor and accessibility services.
 computer_use.macos_access:
   en: macOS access
 computer_use.helper_access:
@@ -648,6 +654,10 @@ activity.ask_questions:
   en: Ask questions
 activity.arguments:
   en: Arguments
+activity.tool_name:
+  en: Tool
+activity.mcp_server:
+  en: MCP server
 activity.output:
   en: Output
 activity.image_output:
@@ -893,8 +903,6 @@ computer_use.controlling:
   en: Controlling
 computer_use.captured:
   en: Captured
-computer_use.take_control:
-  en: Take Control
 computer_use.preparing_preview:
   en: Preparing preview…
 

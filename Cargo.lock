@@ -8661,6 +8661,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "waku-computer-use"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libloading",
+ "serde_json",
+]
+
+[[package]]
 name = "waku-core"
 version = "0.1.0"
 dependencies = [
@@ -8689,6 +8698,7 @@ dependencies = [
  "uuid",
  "waku-client",
  "waku-protocol",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

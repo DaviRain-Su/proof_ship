@@ -9,6 +9,7 @@ mod computer_use;
 mod deepseek;
 mod opencode;
 mod opencode2;
+mod opencode2_computer_use;
 mod pi;
 mod support;
 mod title_refresh;

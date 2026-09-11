@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { reduceRuntimeEvent } from './event-reducer'
+import { activityDisclosureSections } from './transcript-presentation'
 import type { AgentSession, SequencedEvent } from './generated'
 
 const clock = {
@@ -112,6 +113,37 @@ describe('promptSubmitted', () => {
     expect(result.session.auto_title).toBe('Add a dark mode toggle to settings')
     expect(result.session.turns.at(-1)?.turn_count).toBe(1)
   })
+})
+
+test('MCP tool identity survives partial updates and stays separate in expanded details', () => {
+  const call = {
+    id: 'tool-1', source_id: 'call-1', kind: 'tool' as const,
+    title: 'List running apps via CUA', detail: null,
+    tool_name: 'js', mcp_server: 'waku_js_repl', arguments: '{}',
+    failed: false, complete: false,
+  }
+  const started = apply(runningSession(), 'richActivity', call)
+  const completed = apply(started, 'richActivity', {
+    ...call, id: 'update-1', tool_name: null, mcp_server: null, arguments: null,
+    output: '2 apps', complete: true,
+  })
+  const content = completed.transcript_blocks[0]!.content
+  if (content.kind !== 'activities') throw new Error('Expected an activity block')
+  const item = content.data[0]!
+  expect(item.id).toBe('tool-1')
+  expect(item.title).toBe('List running apps via CUA')
+  expect(activityDisclosureSections(item)).toEqual([
+    { kind: 'mcp-server', label: 'MCP server', content: 'waku_js_repl' },
+    { kind: 'tool-name', label: 'Tool', content: 'js' },
+    { kind: 'arguments', label: 'Arguments', content: '{}' },
+    { kind: 'output', label: 'Output', content: '2 apps' },
+  ])
+  expect(activityDisclosureSections({
+    ...call, mcp_server: null, tool_name: 'read_file', arguments: null, detail: 'Permission denied',
+  })).toEqual([
+    { kind: 'tool-name', label: 'Tool', content: 'read_file' },
+    { kind: 'detail', label: null, content: 'Permission denied' },
+  ])
 })
 
 function apply(session: AgentSession, kind: string, payload: unknown) {

@@ -2191,6 +2191,12 @@ pub struct ActivityItem {
     pub source_id: Option<String>,
     pub kind: ActivityKind,
     pub title: String,
+    /// Native tool identity, separate from the human-readable activity title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    /// MCP server identity, kept separate so clients need not parse tool names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_server: Option<String>,
     pub detail: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments: Option<String>,
@@ -2239,6 +2245,8 @@ impl ActivityItem {
             source_id,
             kind,
             title,
+            tool_name: None,
+            mcp_server: None,
             detail,
             arguments: None,
             output: None,
@@ -2257,6 +2265,30 @@ impl ActivityItem {
             reasoning: Some(reasoning),
             ..Self::new(None, ActivityKind::Reasoning, "Reasoning", None, complete)
         }
+    }
+
+    pub fn with_tool_name(mut self, name: Option<&str>) -> Self {
+        if let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) {
+            if let Some((server, tool)) = name
+                .strip_prefix("mcp__")
+                .and_then(|name| name.split_once("__"))
+                && !server.is_empty()
+                && !tool.is_empty()
+            {
+                self.mcp_server = Some(server.to_owned());
+                self.tool_name = Some(tool.to_owned());
+            } else {
+                self.tool_name = Some(name.to_owned());
+            }
+        }
+        self
+    }
+
+    pub fn with_mcp_server(mut self, server: Option<&str>) -> Self {
+        if let Some(server) = server.map(str::trim).filter(|server| !server.is_empty()) {
+            self.mcp_server = Some(server.to_owned());
+        }
+        self
     }
 
     pub fn with_arguments(mut self, arguments: Option<String>) -> Self {
@@ -3535,6 +3567,26 @@ mod tests {
         assert_eq!(message.content, "compare this @/tmp/reference.png");
         assert_eq!(message.visible_content(), "compare this");
         assert_eq!(message.attachments, vec![attachment]);
+    }
+
+    #[test]
+    fn activity_tool_identity_preserves_names_and_separates_mcp_servers() {
+        let mcp = ActivityItem::new(None, ActivityKind::Tool, "Read notes", None, true)
+            .with_tool_name(Some("mcp__filesystem__read_file"));
+        assert_eq!(mcp.title, "Read notes");
+        assert_eq!(mcp.tool_name.as_deref(), Some("read_file"));
+        assert_eq!(mcp.mcp_server.as_deref(), Some("filesystem"));
+        let regular = ActivityItem::new(None, ActivityKind::Tool, "Read notes", None, true)
+            .with_tool_name(Some("read_file"));
+        assert_eq!(regular.tool_name.as_deref(), Some("read_file"));
+        assert_eq!(regular.mcp_server, None);
+        let legacy: ActivityItem = serde_json::from_value(serde_json::json!({
+            "id": Uuid::nil(), "kind": "tool", "title": "Read notes", "detail": null,
+            "complete": true,
+        }))
+        .unwrap();
+        assert!(legacy.tool_name.is_none());
+        assert!(legacy.mcp_server.is_none());
     }
 
     #[test]

@@ -1870,7 +1870,13 @@ fn tool_activity(update: &Value, events: &impl DriverEventSink, state: &mut AcpS
         .filter(|value| !value.is_null())
         .or_else(|| update.get("rawOutput").filter(|value| !value.is_null()));
     let item =
-        activity::tool_activity(id, kind, title, arguments, output, output, failed, complete);
+        activity::tool_activity(id, kind, title, arguments, output, output, failed, complete)
+            .with_tool_name(
+                arguments
+                    .and_then(|input| input.get("tool_name"))
+                    .and_then(Value::as_str)
+                    .or_else(|| wire_title.filter(|title| title.starts_with("mcp__"))),
+            );
     let _ = events.send(DriverEvent::RichActivity(item));
 }
 

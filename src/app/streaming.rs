@@ -124,6 +124,12 @@ impl Waku {
                     let activity_id = activity.id;
                     activity.kind = item.kind;
                     activity.title = item.title;
+                    if item.tool_name.is_some() {
+                        activity.tool_name = item.tool_name;
+                    }
+                    if item.mcp_server.is_some() {
+                        activity.mcp_server = item.mcp_server;
+                    }
                     activity.complete = item.complete;
                     activity.failed = item.failed;
                     if item.detail.is_some() {
@@ -313,8 +319,7 @@ impl Waku {
                     } else if matches!(
                         session.provider,
                         ProviderKind::Codex | ProviderKind::Claude | ProviderKind::OpenCode2
-                    )
-                    {
+                    ) {
                         // Some providers start turns on their own: Codex goal
                         // continuation pursues an active goal whenever the
                         // thread is idle, and Claude Code re-enters the model
@@ -466,7 +471,7 @@ impl Waku {
             }
             DriverEvent::ComputerUseUpdated(state) => {
                 if self.accepts_turn_output(session_id) {
-                    Self::upsert_computer_use_preview(runtime, state);
+                    Self::upsert_computer_use_preview(session_id, runtime, state, cx);
                 }
             }
             DriverEvent::SteerAccepted { message } => {
@@ -799,31 +804,74 @@ impl Waku {
         true
     }
 
-    fn upsert_computer_use_preview(runtime: &mut SessionRuntime, state: ComputerUseState) {
+    fn upsert_computer_use_preview(
+        session_id: Uuid,
+        runtime: &mut SessionRuntime,
+        state: ComputerUseState,
+        cx: &mut Context<Self>,
+    ) {
         if !state.visible {
             return;
         }
         let Some(window_id) = state.target.as_ref().map(|target| target.window_id) else {
             return;
         };
-        let mut preview = ComputerUsePreview {
-            target: state.target,
-            phase: state.phase,
-            visible: state.visible,
-            screenshot: state.image_url.as_deref().and_then(|image_url| {
-                crate::computer_use::decode_preview_image_url(image_url).ok()
-            }),
-        };
-        if let Some(index) = runtime.computer_use_previews.iter().position(|preview| {
-            preview
-                .target
-                .as_ref()
-                .is_some_and(|target| target.window_id == window_id)
-        }) {
-            let previous = runtime.computer_use_previews.remove(index);
-            if preview.screenshot.is_none() {
-                preview.screenshot = previous.screenshot;
+        let mut preview = if let Some(index) =
+            runtime.computer_use_previews.iter().position(|preview| {
+                preview
+                    .target
+                    .as_ref()
+                    .is_some_and(|target| target.window_id == window_id)
+            }) {
+            if !runtime.computer_use_previews[index].visible {
+                return;
             }
+            runtime.computer_use_previews.remove(index)
+        } else {
+            ComputerUsePreview {
+                target: None,
+                phase: state.phase,
+                visible: state.visible,
+                frames: Default::default(),
+                decode_task: None,
+            }
+        };
+        preview.target = state.target;
+        preview.phase = state.phase;
+        preview.visible = state.visible;
+        if let Some(image_url) = state.image_url {
+            let generation = preview.frames.begin();
+            // Dropping the prior task also prevents a dismissed/recreated
+            // window or replaced runtime from receiving its stale completion.
+            preview.decode_task = None;
+            let renderer = cx.svg_renderer();
+            let current_source = preview.frames.current.as_ref().map(|frame| frame.source_id);
+            let decode = cx.background_executor().spawn(async move {
+                crate::computer_use::decode_preview_image_url(&image_url, renderer, current_source)
+                    .ok()
+                    .flatten()
+            });
+            preview.decode_task = Some(cx.spawn(async move |this, cx| {
+                let image = decode.await;
+                let _ = this.update(cx, |this, cx| {
+                    let Some(preview) = this.runtimes.get_mut(&session_id).and_then(|runtime| {
+                        runtime.computer_use_previews.iter_mut().find(|preview| {
+                            preview
+                                .target
+                                .as_ref()
+                                .is_some_and(|target| target.window_id == window_id)
+                        })
+                    }) else {
+                        return;
+                    };
+                    let image = image.map(|(source_id, image)| {
+                        crate::computer_use::PreviewImage::new(source_id, image, cx)
+                    });
+                    if preview.frames.complete(generation, image) {
+                        cx.notify();
+                    }
+                });
+            }));
         }
         runtime.computer_use_previews.push(preview);
     }

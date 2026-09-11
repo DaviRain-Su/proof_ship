@@ -277,7 +277,7 @@ impl Render for Waku {
         let theme = Theme::current(cx);
         let empty = should_render_empty_state(self.selected_session());
         let permission = self.render_permission(cx);
-        let computer_use = self.render_computer_use_overlay(cx);
+        let computer_use = self.render_computer_use_overlay(window, cx);
         let command_palette = self.render_command_palette(window, cx);
         let commit_dialog = self.render_commit_dialog(cx);
         let goal_dialog = self.render_goal_dialog(window, cx);
@@ -375,7 +375,6 @@ impl Render for Waku {
                     })
                     .relative()
                     .children(toast)
-                    .children(computer_use)
                     .when(self.sidebar_visible, |element| {
                         element.child(self.render_panel_resize_handle(
                             "sidebar-resize-handle",
@@ -410,6 +409,7 @@ impl Render for Waku {
                         ),
                 )
             })
+            .children(computer_use)
             .children(command_palette)
             .children(commit_dialog)
             .children(goal_dialog)

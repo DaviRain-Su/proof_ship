@@ -3,6 +3,32 @@ use super::*;
 use anyhow::Context as _;
 use base64::Engine as _;
 
+const COMPUTER_USE_PREVIEW_WIDTH: f32 = 304.0;
+const COMPUTER_USE_PREVIEW_HEIGHT: f32 = 172.0;
+const COMPUTER_USE_PREVIEW_RADIUS: f32 = 12.0;
+const COMPUTER_USE_PREVIEW_INNER_RADIUS: f32 = COMPUTER_USE_PREVIEW_RADIUS - 1.0;
+
+struct ComputerUsePreviewDrag {
+    cursor_offset: Cell<gpui::Point<Pixels>>,
+}
+
+fn clamp_computer_use_preview_position(
+    position: gpui::Point<Pixels>,
+    size: gpui::Size<Pixels>,
+    window: &Window,
+) -> gpui::Point<Pixels> {
+    let inset = window.client_inset().unwrap_or_default() + px(8.0);
+    let viewport = window.viewport_size();
+    point(
+        position
+            .x
+            .clamp(inset, (viewport.width - size.width - inset).max(inset)),
+        position
+            .y
+            .clamp(inset, (viewport.height - size.height - inset).max(inset)),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ComposerSubmitAction {
     Send,
@@ -536,12 +562,20 @@ impl Waku {
         )
     }
 
-    pub(super) fn render_computer_use_overlay(&self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn render_computer_use_overlay(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let previews = self
             .selected_runtime()?
             .computer_use_previews
             .iter()
-            .filter(|state| state.visible && state.phase != ComputerUsePhase::AwaitingApproval)
+            .filter(|state| {
+                state.visible
+                    && state.target.is_some()
+                    && state.phase != ComputerUsePhase::AwaitingApproval
+            })
             .collect::<Vec<_>>();
         if previews.is_empty() {
             return None;
@@ -551,6 +585,21 @@ impl Waku {
         let stack_y_offset = 24.0;
         let deepest_x_offset = (previews.len().saturating_sub(1) as f32) * stack_x_offset;
         let deepest_y_offset = (previews.len().saturating_sub(1) as f32) * stack_y_offset;
+        let stack_size = gpui::size(
+            px(COMPUTER_USE_PREVIEW_WIDTH + deepest_x_offset),
+            px(COMPUTER_USE_PREVIEW_HEIGHT + deepest_y_offset),
+        );
+        let position = clamp_computer_use_preview_position(
+            self.computer_use_preview_position.unwrap_or_else(|| {
+                let viewport = window.viewport_size();
+                point(
+                    viewport.width - px(self.right_panel_rendered_width + 16.0) - stack_size.width,
+                    viewport.height - px(82.0) - stack_size.height,
+                )
+            }),
+            stack_size,
+            window,
+        );
         let top_index = previews.len() - 1;
         let cards = previews
             .into_iter()
@@ -559,42 +608,45 @@ impl Waku {
                 let target = state.target.as_ref()?;
                 let window_id = target.window_id;
                 let app_name = target.app_name.clone();
-                let app_initial = app_name.chars().next().unwrap_or('W').to_string();
-                let title = target.window_title.clone();
-                let screenshot = state.screenshot.clone();
-                let active = state.phase == ComputerUsePhase::Running;
-                let failed = state.phase == ComputerUsePhase::Failed;
+                let screenshot = state
+                    .frames
+                    .current
+                    .as_ref()
+                    .map(|frame| frame.image.clone());
                 let is_top = index == top_index;
                 let depth = (top_index - index) as f32;
                 let x_offset = depth * stack_x_offset;
                 let y_offset = depth * stack_y_offset;
-                let status_color = if failed {
-                    theme.danger
-                } else if active {
-                    theme.warning
-                } else {
-                    theme.accent
-                };
-                let status = if failed {
-                    tr!("computer_use.stopped")
-                } else if active {
-                    tr!("computer_use.controlling")
-                } else {
-                    tr!("computer_use.captured")
-                };
+                let card_offset = point(
+                    px(deepest_x_offset - x_offset),
+                    px(deepest_y_offset - y_offset),
+                );
+                let focus =
+                    self.transcript_control_focus(format!("computer-use-preview-{window_id}"), cx);
+                let mouse_focus = focus.clone();
+                let close_focus = self.transcript_control_focus(
+                    format!("computer-use-preview-close-{window_id}"),
+                    cx,
+                );
+                let group_name = SharedString::from(format!("computer-use-preview-{window_id}"));
+                let keyboard_controls = window.last_input_was_keyboard()
+                    && (focus.contains_focused(window, cx) || close_focus.is_focused(window));
 
                 Some(
                     div()
                         .id(SharedString::from(format!(
                             "computer-use-preview-{window_id}"
                         )))
+                        .track_focus(&focus)
+                        .tab_index(0)
+                        .tab_stop(true)
+                        .group(group_name.clone())
                         .absolute()
                         .right(px(x_offset))
                         .bottom(px(y_offset))
-                        .w(px(304.0))
-                        .h(px(220.0))
-                        .p(px(6.0))
-                        .rounded(px(16.0))
+                        .w(px(COMPUTER_USE_PREVIEW_WIDTH))
+                        .h(px(COMPUTER_USE_PREVIEW_HEIGHT))
+                        .rounded(px(COMPUTER_USE_PREVIEW_RADIUS))
                         .overflow_hidden()
                         .border_1()
                         .border_color(if is_top {
@@ -603,186 +655,189 @@ impl Waku {
                             theme.border
                         })
                         .bg(theme.raised)
-                        .shadow_lg()
-                        .cursor_default()
-                        .when(!is_top, |element| element.opacity(0.96))
-                        .child(
-                            div()
-                                .h(px(38.0))
-                                .px(px(5.0))
-                                .flex()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(
-                                    div()
-                                        .w(px(27.0))
-                                        .h(px(27.0))
-                                        .rounded(px(7.0))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .bg(theme.overlay_strong)
-                                        .text_size(sp(12.5))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.text_secondary)
-                                        .child(SharedString::from(app_initial)),
-                                )
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(
-                                            div()
-                                                .text_size(sp(12.5))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(theme.text)
-                                                .truncate()
-                                                .child(SharedString::from(app_name)),
-                                        )
-                                        .child(
-                                            div()
-                                                .mt(px(1.0))
-                                                .text_size(sp(12.5))
-                                                .text_color(theme.text_tertiary)
-                                                .truncate()
-                                                .child(SharedString::from(title)),
-                                        ),
-                                )
-                                .when(is_top, |element| {
-                                    element.child(
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "computer-use-preview-action-{window_id}"
-                                            )))
-                                            .h(px(27.0))
-                                            .px(px(10.0))
-                                            .rounded(px(7.0))
-                                            .border_1()
-                                            .border_color(theme.border_strong)
-                                            .flex()
-                                            .items_center()
-                                            .cursor_default()
-                                            .text_size(sp(12.5))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(if active {
-                                                theme.danger
-                                            } else {
-                                                theme.text_secondary
-                                            })
-                                            .hover(|element| element.bg(theme.overlay))
-                                            .active(|element| element.opacity(0.8))
-                                            .child(if active {
-                                                tr!("computer_use.take_control")
-                                            } else {
-                                                tr!("common.close")
-                                            })
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                cx.stop_propagation();
-                                                if active {
-                                                    this.cancel_turn(cx);
-                                                } else {
-                                                    this.dismiss_computer_use(window_id, cx);
-                                                }
-                                            })),
-                                    )
-                                }),
+                        .shadow(vec![
+                            gpui::BoxShadow::new(
+                                px(0.0),
+                                px(4.0),
+                                gpui::black().opacity(if theme.is_dark { 0.32 } else { 0.16 }),
+                            )
+                            .blur_radius(px(16.0)),
+                        ])
+                        .occlude()
+                        .cursor(gpui::CursorStyle::OpenHand)
+                        .focus_visible(|style| style.border_color(theme.accent))
+                        .on_drag(
+                            ComputerUsePreviewDrag {
+                                cursor_offset: Cell::default(),
+                            },
+                            move |drag, offset, _, cx| {
+                                drag.cursor_offset.set(offset + card_offset);
+                                cx.new(|_| gpui::EmptyView)
+                            },
                         )
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            window.focus(&mouse_focus, cx);
+                            cx.stop_propagation();
+                        })
+                        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                            if !focus.is_focused(window) {
+                                return;
+                            }
+                            let step = px(if event.keystroke.modifiers.shift {
+                                40.0
+                            } else {
+                                10.0
+                            });
+                            let delta = match event.keystroke.key.as_str() {
+                                "left" => point(-step, px(0.0)),
+                                "right" => point(step, px(0.0)),
+                                "up" => point(px(0.0), -step),
+                                "down" => point(px(0.0), step),
+                                _ => return,
+                            };
+                            this.computer_use_preview_position =
+                                Some(clamp_computer_use_preview_position(
+                                    position + delta,
+                                    stack_size,
+                                    window,
+                                ));
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
                         .child(
+                            // GPUI overflow clipping is rectangular. Round
+                            // each painted layer inside the card's 1px border.
                             div()
-                                .relative()
-                                .h(px(170.0))
-                                .w_full()
-                                .rounded(px(11.0))
+                                .absolute()
+                                .inset_0()
+                                .rounded(px(COMPUTER_USE_PREVIEW_INNER_RADIUS))
                                 .overflow_hidden()
-                                .bg(rgb(0x101010))
+                                .bg(theme.inset)
                                 .when_some(screenshot, |element, screenshot| {
                                     element.child(
                                         img(screenshot)
                                             .w_full()
                                             .h_full()
+                                            .rounded(px(COMPUTER_USE_PREVIEW_INNER_RADIUS))
                                             .object_fit(ObjectFit::Contain),
                                     )
                                 })
-                                .when(state.screenshot.is_none(), |element| {
+                                .when(state.frames.current.is_none(), |element| {
                                     element.child(
                                         div()
                                             .absolute()
                                             .inset_0()
                                             .flex()
-                                            .flex_col()
                                             .items_center()
                                             .justify_center()
-                                            .gap(px(9.0))
-                                            .child(
-                                                div()
-                                                    .w(px(34.0))
-                                                    .h(px(23.0))
-                                                    .rounded(px(5.0))
-                                                    .border_1()
-                                                    .border_color(theme.text_tertiary)
-                                                    .child(
-                                                        div()
-                                                            .mt(px(4.0))
-                                                            .ml(px(25.0))
-                                                            .w(px(3.0))
-                                                            .h(px(3.0))
-                                                            .rounded_full()
-                                                            .bg(status_color),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(sp(12.5))
-                                                    .text_color(theme.text_tertiary)
-                                                    .child(tr!("computer_use.preparing_preview")),
-                                            ),
+                                            .text_size(sp(12.0))
+                                            .text_color(theme.text_secondary)
+                                            .child(tr!("computer_use.preparing_preview")),
                                     )
-                                })
+                                }),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .w_full()
+                                .h(px(64.0))
+                                .rounded_t(px(COMPUTER_USE_PREVIEW_INNER_RADIUS))
+                                .pt(px(6.0))
+                                .pl(px(6.0))
+                                .pr(px(10.0))
+                                .flex()
+                                .items_start()
+                                .gap(px(6.0))
+                                .opacity(if keyboard_controls { 1.0 } else { 0.0 })
+                                .group_hover(group_name, |style| style.opacity(1.0))
+                                .bg(linear_gradient(
+                                    180.0,
+                                    linear_color_stop(gpui::black().opacity(0.65), 0.5),
+                                    linear_color_stop(gpui::transparent_black(), 1.0),
+                                ))
                                 .child(
                                     div()
-                                        .absolute()
-                                        .top(px(8.0))
-                                        .left(px(8.0))
-                                        .h(px(24.0))
-                                        .px(px(8.0))
+                                        .id(SharedString::from(format!(
+                                            "computer-use-preview-close-{window_id}"
+                                        )))
+                                        .track_focus(&close_focus)
+                                        .aria_label(tr!("common.close"))
+                                        .tab_index(0)
+                                        .tab_stop(true)
+                                        .size(px(26.0))
+                                        .flex_none()
                                         .rounded_full()
+                                        .border_1()
+                                        .border_color(gpui::transparent_black())
+                                        .focus_visible(|style| style.border_color(gpui::white()))
                                         .flex()
                                         .items_center()
-                                        .gap(px(6.0))
-                                        .bg(theme.canvas.opacity(0.86))
-                                        .border_1()
-                                        .border_color(theme.border)
-                                        .child(
-                                            div()
-                                                .w(px(6.0))
-                                                .h(px(6.0))
-                                                .rounded_full()
-                                                .bg(status_color),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_size(sp(12.5))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(theme.text)
-                                                .child(status),
-                                        ),
+                                        .justify_center()
+                                        .cursor_default()
+                                        .hover(|style| style.bg(gpui::white().opacity(0.16)))
+                                        .active(|style| style.bg(gpui::white().opacity(0.24)))
+                                        .tooltip(Tooltip::text(tr!("common.close")))
+                                        .child(icon("icons/x.svg", 11.0, gpui::white()))
+                                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                            window.focus(&close_focus, cx);
+                                            cx.stop_propagation();
+                                        })
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            cx.stop_propagation();
+                                            this.dismiss_computer_use(window_id, cx);
+                                            window.focus(&this.composer_focus(cx), cx);
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .pt(px(5.0))
+                                        .text_size(sp(12.0))
+                                        .line_height(sp(16.0))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(gpui::white())
+                                        .truncate()
+                                        .child(SharedString::from(app_name)),
                                 ),
                         )
                         .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
                             this.bring_computer_use_to_front(window_id, cx);
                         })),
                 )
             })
             .collect::<Vec<_>>();
 
+        let stack = div()
+            .id("computer-use-previews")
+            .tab_group()
+            .tab_stop(false)
+            .relative()
+            .w(stack_size.width)
+            .h(stack_size.height)
+            .children(cards)
+            .on_drag_move::<ComputerUsePreviewDrag>(cx.listener(
+                move |this, event: &gpui::DragMoveEvent<ComputerUsePreviewDrag>, window, cx| {
+                    let position = event.event.position - event.drag(cx).cursor_offset.get();
+                    this.computer_use_preview_position = Some(clamp_computer_use_preview_position(
+                        position, stack_size, window,
+                    ));
+                    // Native drag dispatch already refreshes the window; avoid
+                    // an additional root notify for every pointer movement.
+                },
+            ));
+
         Some(
-            div()
-                .absolute()
-                .right(px(16.0))
-                .bottom(px(82.0))
-                .w(px(304.0 + deepest_x_offset))
-                .h(px(220.0 + deepest_y_offset))
-                .children(cards),
+            gpui::deferred(
+                gpui::anchored()
+                    .position(position)
+                    .snap_to_window_with_margin(px(8.0))
+                    .child(stack),
+            )
+            .into_any_element(),
         )
     }
 
@@ -806,7 +861,12 @@ impl Waku {
                 .flex()
                 .items_center()
                 .gap(px(6.0))
-                .child(provider_mark(&theme, provider, 10.5, provider_color(&theme, provider).opacity(0.9)))
+                .child(provider_mark(
+                    &theme,
+                    provider,
+                    10.5,
+                    provider_color(&theme, provider).opacity(0.9),
+                ))
                 .child(
                     div()
                         .max_w(px(210.0))
@@ -937,7 +997,11 @@ impl Waku {
                 .label(tr!("models.no_providers"))
         } else {
             MenuChip::new("composer-provider-model")
-                .provider(&theme, provider, provider_color(&theme, provider).opacity(0.9))
+                .provider(
+                    &theme,
+                    provider,
+                    provider_color(&theme, provider).opacity(0.9),
+                )
                 .label(selected_model_name)
         };
 
@@ -1051,11 +1115,16 @@ impl Waku {
                                     },
                                 )
                             })
-                            .child(provider_mark(&theme, kind, 18.0, provider_color(&theme, kind).opacity(if selected {
+                            .child(provider_mark(
+                                &theme,
+                                kind,
+                                18.0,
+                                provider_color(&theme, kind).opacity(if selected {
                                     1.0
                                 } else {
                                     0.82
-                                }))),
+                                }),
+                            )),
                     );
                 }
 
@@ -1172,7 +1241,12 @@ impl Waku {
                                             .flex()
                                             .items_center()
                                             .gap(px(6.0))
-                                            .child(provider_mark(&theme, kind, 10.5, provider_color(&theme, kind).opacity(0.85)))
+                                            .child(provider_mark(
+                                                &theme,
+                                                kind,
+                                                10.5,
+                                                provider_color(&theme, kind).opacity(0.85),
+                                            ))
                                             .child(
                                                 div()
                                                     .truncate()

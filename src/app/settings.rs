@@ -1723,7 +1723,12 @@ impl Waku {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(provider_mark(&theme, kind, 16.0, provider_color(&theme, kind).opacity(if installed { 1.0 } else { 0.5 })))
+                        .child(provider_mark(
+                            &theme,
+                            kind,
+                            16.0,
+                            provider_color(&theme, kind).opacity(if installed { 1.0 } else { 0.5 }),
+                        ))
                         .child(
                             div()
                                 .absolute()
@@ -2180,71 +2185,101 @@ impl Waku {
                         move |this, _, cx| this.set_computer_use_enabled(!enabled, cx),
                     )),
             )
-            .child(
-                div()
-                    .px(px(20.0))
-                    .py(px(14.0))
-                    .rounded(px(13.0))
-                    .bg(theme.raised)
-                    .child(
-                        div()
-                            .text_size(sp(13.5))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.text)
-                            .child(tr!("computer_use.macos_access")),
-                    )
-                    .child(
-                        div()
-                            .mt(px(4.0))
-                            .text_size(sp(12.5))
-                            .text_color(theme.text_secondary)
-                            .child(SharedString::from(tr!(
-                                "computer_use.helper_access",
-                                helper = helper_name
-                            ))),
-                    )
-                    .child(permission_status_row(
-                        tr!("computer_use.screen_recording"),
-                        tr!("computer_use.screen_recording_description"),
-                        permissions.screen_recording,
-                        "screen-recording-settings",
-                        theme,
-                        cx,
-                    ))
-                    .child(permission_status_row(
-                        tr!("computer_use.accessibility"),
-                        tr!("computer_use.accessibility_description"),
-                        permissions.accessibility,
-                        "accessibility-settings",
-                        theme,
-                        cx,
-                    ))
-                    .child(
-                        div().mt(px(11.0)).flex().items_center().gap(px(8.0)).child(
+            .when(cfg!(target_os = "macos"), |element| {
+                element.child(
+                    div()
+                        .px(px(20.0))
+                        .py(px(14.0))
+                        .rounded(px(13.0))
+                        .bg(theme.raised)
+                        .child(
                             div()
-                                .id("recheck-computer-permissions")
-                                .h(px(28.0))
-                                .px(px(11.0))
-                                .rounded(px(7.0))
-                                .border_1()
-                                .border_color(theme.border_strong)
-                                .text_color(theme.text_secondary)
-                                .flex()
-                                .items_center()
-                                .cursor_default()
+                                .text_size(sp(13.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(theme.text)
+                                .child(tr!("computer_use.macos_access")),
+                        )
+                        .child(
+                            div()
+                                .mt(px(4.0))
                                 .text_size(sp(12.5))
-                                .opacity(if pending { 0.6 } else { 1.0 })
-                                .child(if pending {
-                                    tr!("common.checking")
-                                } else {
-                                    tr!("common.recheck")
-                                })
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.request_computer_permissions(false, cx);
-                                })),
+                                .text_color(theme.text_secondary)
+                                .child(SharedString::from(tr!(
+                                    "computer_use.helper_access",
+                                    helper = helper_name
+                                ))),
+                        )
+                        .child(permission_status_row(
+                            tr!("computer_use.screen_recording"),
+                            tr!("computer_use.screen_recording_description"),
+                            permissions.screen_recording,
+                            "screen-recording-settings",
+                            theme,
+                            cx,
+                        ))
+                        .child(permission_status_row(
+                            tr!("computer_use.accessibility"),
+                            tr!("computer_use.accessibility_description"),
+                            permissions.accessibility,
+                            "accessibility-settings",
+                            theme,
+                            cx,
+                        ))
+                        .child(
+                            div().mt(px(11.0)).flex().items_center().gap(px(8.0)).child(
+                                div()
+                                    .id("recheck-computer-permissions")
+                                    .h(px(28.0))
+                                    .px(px(11.0))
+                                    .rounded(px(7.0))
+                                    .border_1()
+                                    .border_color(theme.border_strong)
+                                    .text_color(theme.text_secondary)
+                                    .flex()
+                                    .items_center()
+                                    .cursor_default()
+                                    .text_size(sp(12.5))
+                                    .opacity(if pending { 0.6 } else { 1.0 })
+                                    .child(if pending {
+                                        tr!("common.checking")
+                                    } else {
+                                        tr!("common.recheck")
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.request_computer_permissions(false, cx);
+                                    })),
+                            ),
                         ),
-                    ),
-            )
+                )
+            })
+            .when(!cfg!(target_os = "macos"), |element| {
+                element.child(
+                    div()
+                        .px(px(20.0))
+                        .py(px(14.0))
+                        .rounded(px(13.0))
+                        .bg(theme.raised)
+                        .child(
+                            div()
+                                .text_size(sp(13.5))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(theme.text)
+                                .child(tr!("computer_use.desktop_access")),
+                        )
+                        .child(
+                            div()
+                                .mt(px(5.0))
+                                .text_size(sp(12.5))
+                                .line_height(sp(18.0))
+                                .text_color(theme.text_secondary)
+                                .child(if cfg!(target_os = "windows") {
+                                    tr!("computer_use.windows_access_description")
+                                } else {
+                                    tr!("computer_use.linux_access_description")
+                                }),
+                        ),
+                )
+            })
             .child(
                 div()
                     .px(px(20.0))
@@ -2280,7 +2315,7 @@ impl Waku {
     }
 
     pub(super) fn request_computer_permissions(&mut self, prompt: bool, cx: &mut Context<Self>) {
-        if self.computer_permission_request_pending {
+        if !cfg!(target_os = "macos") || self.computer_permission_request_pending {
             return;
         }
         self.computer_permission_request_pending = true;

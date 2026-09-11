@@ -1274,7 +1274,8 @@ fn tool_activity(part: &Value, events: &impl DriverEventSink, state: &mut OpenCo
         part.get("state"),
         failed,
         complete,
-    );
+    )
+    .with_tool_name(part.get("tool").and_then(Value::as_str));
     let _ = events.send(DriverEvent::RichActivity(item));
 }
 

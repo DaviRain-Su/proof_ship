@@ -77,6 +77,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: oven-sh/setup-bun@v2
+
       - name: Install Rust
         run: |
           rustup toolchain install 1.96.0 --profile minimal
@@ -92,6 +94,8 @@ jobs:
             libvulkan1 \
             libwayland-dev \
             libx11-xcb-dev \
+            libxi-dev \
+            libxtst-dev \
             libxkbcommon-x11-dev \
             pkg-config \
             xdg-desktop-portal
@@ -136,6 +140,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: oven-sh/setup-bun@v2
+
       - name: Install Rust
         run: |
           rustup toolchain install 1.96.0 --profile minimal
@@ -151,6 +157,8 @@ jobs:
             libvulkan1 \
             libwayland-dev \
             libx11-xcb-dev \
+            libxi-dev \
+            libxtst-dev \
             libxkbcommon-x11-dev \
             pkg-config \
             xdg-desktop-portal

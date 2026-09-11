@@ -905,6 +905,78 @@ pub(crate) fn delete_session(endpoint: &Endpoint, session: &str) -> Result<()> {
     Ok(())
 }
 
+/// Runtime-only MCP registration, scoped to one location. This never writes
+/// the shared service's configuration files.
+pub(crate) fn add_mcp(
+    endpoint: &Endpoint,
+    directory: &str,
+    server: &str,
+    config: &Value,
+) -> Result<()> {
+    let path = format!(
+        "/api/mcp/{}{}",
+        encode_path_segment(server),
+        location_query(Some(directory))
+    );
+    request(
+        endpoint,
+        "PUT",
+        &path,
+        Some(&json!({"config": config})),
+        REQUEST_TIMEOUT,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn list_mcp(endpoint: &Endpoint, directory: &str) -> Result<Vec<Value>> {
+    catalogue(endpoint, "/api/mcp", Some(directory), "MCP servers")
+}
+
+pub(crate) fn remove_mcp(endpoint: &Endpoint, directory: &str, server: &str) -> Result<()> {
+    let path = format!(
+        "/api/mcp/{}{}",
+        encode_path_segment(server),
+        location_query(Some(directory))
+    );
+    request(endpoint, "DELETE", &path, None, REQUEST_TIMEOUT)?;
+    Ok(())
+}
+
+pub(crate) fn put_instruction_entry(
+    endpoint: &Endpoint,
+    session: &str,
+    key: &str,
+    value: &str,
+) -> Result<()> {
+    let path = format!(
+        "/api/session/{}/instructions/entries/{}",
+        encode_path_segment(session),
+        encode_path_segment(key)
+    );
+    request(
+        endpoint,
+        "PUT",
+        &path,
+        Some(&json!({"value": value})),
+        REQUEST_TIMEOUT,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn remove_instruction_entry(
+    endpoint: &Endpoint,
+    session: &str,
+    key: &str,
+) -> Result<()> {
+    let path = format!(
+        "/api/session/{}/instructions/entries/{}",
+        encode_path_segment(session),
+        encode_path_segment(key)
+    );
+    request(endpoint, "DELETE", &path, None, REQUEST_TIMEOUT)?;
+    Ok(())
+}
+
 pub(crate) fn rename_session(endpoint: &Endpoint, session: &str, title: &str) -> Result<()> {
     let path = format!("/api/session/{}/rename", encode_path_segment(session));
     let body = json!({ "title": title });
@@ -1516,6 +1588,88 @@ mod tests {
             Some(Delivery::Steer),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn computer_use_runtime_configuration_is_location_and_session_scoped() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let endpoint = Endpoint::local(listener.local_addr().unwrap().port());
+        let (sent, received) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            for _ in 0..4 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut input = std::io::BufReader::new(&mut socket);
+                let mut request = String::new();
+                input.read_line(&mut request).unwrap();
+                let mut length = 0;
+                loop {
+                    let mut header = String::new();
+                    input.read_line(&mut header).unwrap();
+                    if header == "\r\n" {
+                        break;
+                    }
+                    if let Some((key, value)) = header.split_once(':')
+                        && key.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                input.read_exact(&mut body).unwrap();
+                sent.send((
+                    request,
+                    serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null),
+                ))
+                .unwrap();
+                socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                    .unwrap();
+            }
+        });
+        let config = json!({"type":"local","command":["/app/waku_js_repl"],"codemode":false});
+        add_mcp(
+            &endpoint,
+            "/work/project with space",
+            "waku_js_repl_test",
+            &config,
+        )
+        .unwrap();
+        put_instruction_entry(
+            &endpoint,
+            "ses_test",
+            "waku-computer-use",
+            "Use cua.list_apps() through js.",
+        )
+        .unwrap();
+        remove_instruction_entry(&endpoint, "ses_test", "waku-computer-use").unwrap();
+        remove_mcp(&endpoint, "/work/project with space", "waku_js_repl_test").unwrap();
+        server.join().unwrap();
+        let requests: Vec<_> = received.try_iter().collect();
+        assert_eq!(
+            requests[0].0,
+            "PUT /api/mcp/waku_js_repl_test?location%5Bdirectory%5D=%2Fwork%2Fproject%20with%20space HTTP/1.1\r\n"
+        );
+        assert_eq!(requests[0].1, json!({"config":config}));
+        assert_eq!(
+            requests[1].0,
+            "PUT /api/session/ses_test/instructions/entries/waku-computer-use HTTP/1.1\r\n"
+        );
+        assert_eq!(
+            requests[1].1,
+            json!({"value":"Use cua.list_apps() through js."})
+        );
+        assert_eq!(
+            requests[2].0,
+            "DELETE /api/session/ses_test/instructions/entries/waku-computer-use HTTP/1.1\r\n"
+        );
+        assert!(
+            requests[3]
+                .0
+                .starts_with("DELETE /api/mcp/waku_js_repl_test?location%5Bdirectory%5D=")
+        );
     }
 
     #[test]

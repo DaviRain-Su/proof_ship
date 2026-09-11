@@ -245,13 +245,18 @@ export function activityRowDetail(activity: ActivityItem, t?: Translator) {
 }
 
 export type ActivityDisclosureSection = {
-  kind: 'command' | 'arguments' | 'output' | 'detail'
+  kind: 'mcp-server' | 'tool-name' | 'command' | 'arguments' | 'output' | 'detail'
   label: string | null
   content: string
 }
 
 export function activityDisclosureSections(activity: ActivityItem, t?: Translator): ActivityDisclosureSection[] {
   const sections: ActivityDisclosureSection[] = []
+  const server = activity.mcp_server?.trim()
+  const toolName = activity.tool_name?.trim()
+  if (server) sections.push({ kind: 'mcp-server', label: t ? t('activity.mcp_server') : 'MCP server', content: server })
+  if (toolName) sections.push({ kind: 'tool-name', label: t ? t('activity.tool_name') : 'Tool', content: toolName })
+  const metadataCount = sections.length
   if (activity.kind === 'command') {
     const command = activity.arguments?.trim() || activity.display_target?.trim()
     const output = activity.output?.trim()
@@ -266,7 +271,7 @@ export function activityDisclosureSections(activity: ActivityItem, t?: Translato
   if (output) sections.push({ kind: 'output', label: t ? t('activity.output') : 'Output', content: output })
   else if (activity.image_urls?.length) sections.push({ kind: 'output', label: t ? t('activity.output') : 'Output', content: '' })
   const detail = activity.detail?.trim()
-  if (!sections.length && detail) sections.push({ kind: 'detail', label: null, content: detail })
+  if (sections.length === metadataCount && detail) sections.push({ kind: 'detail', label: null, content: detail })
   return sections
 }
 
