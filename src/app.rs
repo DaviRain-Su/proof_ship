@@ -1021,6 +1021,12 @@ struct ActivityScrollViewport {
     last_max_offset: Rc<Cell<Option<Pixels>>>,
 }
 
+#[derive(Clone, Default)]
+struct UserMessageScrollViewport {
+    scroll_handle: ScrollHandle,
+    scrollbar: Rc<ScrollbarState>,
+}
+
 impl Default for ActivityScrollViewport {
     fn default() -> Self {
         Self {
@@ -1544,6 +1550,8 @@ pub struct Waku {
     /// Parsed markdown per assistant message, keeping each response's
     /// incremental parse and flattened blocks alive across frames.
     message_markdown: RefCell<HashMap<Uuid, MarkdownView>>,
+    /// Stable offsets for capped user bubbles, including across virtualized row rebuilds.
+    user_message_viewports: RefCell<HashMap<Uuid, UserMessageScrollViewport>>,
     /// Parsed markdown for reasoning activities, keyed by stable activity id.
     activity_markdown: RefCell<HashMap<Uuid, MarkdownView>>,
     /// Byte offsets live reasoning peeks render from, slid forward as the
@@ -2976,6 +2984,7 @@ impl Waku {
                 transcript_scrollbar_dragging: Cell::new(false),
                 transcript_layout_width: Cell::new(Pixels::ZERO),
                 message_markdown: RefCell::new(HashMap::new()),
+                user_message_viewports: RefCell::new(HashMap::new()),
                 activity_markdown: RefCell::new(HashMap::new()),
                 reasoning_window_starts: RefCell::new(HashMap::new()),
                 activity_scroll_viewports: RefCell::new(HashMap::new()),

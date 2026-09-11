@@ -815,6 +815,7 @@ impl Waku {
         self.expanded_turns.clear();
         self.expanded_changed_files.clear();
         self.transcript_control_focuses.borrow_mut().clear();
+        self.user_message_viewports.borrow_mut().clear();
         self.hovered_response_row = None;
         // Selection belongs to the session being left.
         self.transcript_selection.selection.borrow_mut().clear();

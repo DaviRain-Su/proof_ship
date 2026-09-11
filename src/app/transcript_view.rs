@@ -1293,6 +1293,13 @@ impl Waku {
                         .collect();
                     let attachments_can_reveal = !self.daemon.is_remote();
                     let menu = self.menu_handle(format!("message-{}", message.id), cx);
+                    let user_message_viewport = (message.role == MessageRole::User).then(|| {
+                        self.user_message_viewports
+                            .borrow_mut()
+                            .entry(message.id)
+                            .or_default()
+                            .clone()
+                    });
                     let metrics =
                         self.scaled_markdown_metrics(if message.role == MessageRole::User {
                             MarkdownMetrics::USER_MESSAGE
@@ -1330,6 +1337,7 @@ impl Waku {
                             copied,
                             assistant_message_action,
                             user_message_action,
+                            user_message_viewport: user_message_viewport.as_ref(),
                             message_edit_input,
                             attachment_menus,
                             attachment_images,
@@ -2247,14 +2255,14 @@ impl Waku {
                                     });
                                 }),
                         )
-                        .child(activity_scroll_fade(
+                        .child(scrollbar::edge_fade(
                             reasoning_viewport.scroll_handle.clone(),
-                            ActivityScrollFadeSide::Top,
+                            scrollbar::FadeEdge::Top,
                             activity_surface,
                         ))
-                        .child(activity_scroll_fade(
+                        .child(scrollbar::edge_fade(
                             reasoning_viewport.scroll_handle.clone(),
-                            ActivityScrollFadeSide::Bottom,
+                            scrollbar::FadeEdge::Bottom,
                             activity_surface,
                         ))
                         .child(scrollbar::vertical(
@@ -2420,14 +2428,14 @@ impl Waku {
                                                 });
                                             }),
                                     )
-                                    .child(activity_scroll_fade(
+                                    .child(scrollbar::edge_fade(
                                         output_viewport.scroll_handle.clone(),
-                                        ActivityScrollFadeSide::Top,
+                                        scrollbar::FadeEdge::Top,
                                         activity_surface,
                                     ))
-                                    .child(activity_scroll_fade(
+                                    .child(scrollbar::edge_fade(
                                         output_viewport.scroll_handle.clone(),
-                                        ActivityScrollFadeSide::Bottom,
+                                        scrollbar::FadeEdge::Bottom,
                                         activity_surface,
                                     ))
                                     .child(scrollbar::vertical(
@@ -2539,14 +2547,14 @@ impl Waku {
             .border_t_1()
             .border_color(theme.border_strong)
             .child(rows)
-            .child(activity_scroll_fade(
+            .child(scrollbar::edge_fade(
                 viewport.scroll_handle.clone(),
-                ActivityScrollFadeSide::Top,
+                scrollbar::FadeEdge::Top,
                 surface,
             ))
-            .child(activity_scroll_fade(
+            .child(scrollbar::edge_fade(
                 viewport.scroll_handle.clone(),
-                ActivityScrollFadeSide::Bottom,
+                scrollbar::FadeEdge::Bottom,
                 surface,
             ))
             .child(scrollbar::vertical(
@@ -2676,12 +2684,6 @@ fn activity_diff_break_row(label: Option<String>, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-#[derive(Clone, Copy)]
-enum ActivityScrollFadeSide {
-    Top,
-    Bottom,
-}
-
 fn activity_scroll_at_bottom(scroll: &ScrollHandle) -> bool {
     let scrolled = -scroll.offset().y;
     scroll.max_offset().y - scrolled <= px(0.5)
@@ -2791,54 +2793,6 @@ fn activity_scroll_guard(viewport: ActivityScrollViewport, live: bool) -> impl I
     .absolute()
     .w(px(0.0))
     .h(px(0.0))
-}
-
-fn activity_scroll_fade(
-    scroll: ScrollHandle,
-    side: ActivityScrollFadeSide,
-    surface: Hsla,
-) -> impl IntoElement {
-    canvas(
-        move |bounds, _, _| {
-            let scrolled = -scroll.offset().y;
-            let max_offset = scroll.max_offset().y;
-            let visible = match side {
-                ActivityScrollFadeSide::Top => scrolled > px(0.5),
-                ActivityScrollFadeSide::Bottom => max_offset - scrolled > px(0.5),
-            };
-            visible.then(|| {
-                let transparent = surface.opacity(0.0);
-                let background = match side {
-                    ActivityScrollFadeSide::Top => linear_gradient(
-                        180.0,
-                        linear_color_stop(surface, 0.0),
-                        linear_color_stop(transparent, 1.0),
-                    ),
-                    ActivityScrollFadeSide::Bottom => linear_gradient(
-                        180.0,
-                        linear_color_stop(transparent, 0.0),
-                        linear_color_stop(surface, 1.0),
-                    ),
-                };
-                fill(bounds, background)
-            })
-        },
-        |_, fade, window, _| {
-            if let Some(fade) = fade {
-                window.paint_quad(fade);
-            }
-        },
-    )
-    .absolute()
-    .left_0()
-    .w_full()
-    .h(px(18.0))
-    .when(matches!(side, ActivityScrollFadeSide::Top), |element| {
-        element.top_0()
-    })
-    .when(matches!(side, ActivityScrollFadeSide::Bottom), |element| {
-        element.bottom_0()
-    })
 }
 
 fn render_activity_image(
