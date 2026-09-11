@@ -847,7 +847,7 @@ impl Waku {
         let theme = Theme::current(cx);
         let session = self.selected_session();
         let provider = session.map(|session| session.provider).unwrap_or_default();
-        let selected_model = session.and_then(|session| self.model_for_session(session));
+        let selected_model = session.and_then(|session| self.catalog_model_id_for_session(session));
         let selected_model_name = self.model_display_name(provider, selected_model);
         let locked_provider = session
             .filter(|session| !session.messages.is_empty())
@@ -1434,7 +1434,7 @@ impl Waku {
     pub(super) fn reveal_selected_picker_model(&self) {
         let session = self.selected_session();
         let provider = session.map(|session| session.provider).unwrap_or_default();
-        let selected_model = session.and_then(|session| self.model_for_session(session));
+        let selected_model = session.and_then(|session| self.catalog_model_id_for_session(session));
         let locked_provider = session
             .filter(|session| !session.messages.is_empty())
             .map(|session| session.provider);
@@ -1477,6 +1477,25 @@ impl Waku {
             return None;
         }
 
+        let cursor_suffix = (session.provider == ProviderKind::Cursor)
+            .then(|| self.model_for_session(session))
+            .flatten()
+            .and_then(|requested| {
+                self.provider_probe(session.provider).and_then(|probe| {
+                    waku_protocol::model_catalog::cursor_catalog_model(&probe.models, requested)
+                })
+            })
+            .map(|matched| matched.suffix)
+            .unwrap_or_default();
+        let suffix_effort = waku_protocol::model_catalog::cursor_suffix_reasoning_effort(
+            &cursor_suffix,
+            &model.reasoning_efforts,
+        );
+        let suffix_tier = waku_protocol::model_catalog::cursor_suffix_service_tier(
+            &cursor_suffix,
+            &model.service_tiers,
+        );
+
         let selected_effort = session
             .reasoning_effort
             .as_deref()
@@ -1486,6 +1505,7 @@ impl Waku {
                     .iter()
                     .any(|option| option.id == *selected)
             })
+            .or(suffix_effort.as_deref())
             .or(model.default_reasoning_effort.as_deref())
             .or_else(|| {
                 model
@@ -1512,6 +1532,7 @@ impl Waku {
                         .iter()
                         .any(|option| option.id == *selected)
             })
+            .or(suffix_tier.as_deref())
             .or(model.default_service_tier.as_deref())
             .unwrap_or("default")
             .to_owned();

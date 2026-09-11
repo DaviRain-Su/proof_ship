@@ -93,7 +93,7 @@ the transport absorbed the change or wants to be restarted:
 
 | Change | Codex | Pi | ACP | OpenCode | Claude | Amp |
 | --- | --- | --- | --- | --- | --- | --- |
-| Model, reasoning effort, service tier | in session — they ride on every `turn/start` | in session — `set_model`, `set_thinking_level` | in session — `session/set_model`, except Fx's advertised `model` config option | in session — the model rides on each prompt | in session — a `set_model` control request | restart — all three are launch arguments |
+| Model, reasoning effort, service tier | in session — they ride on every `turn/start` | in session — `set_model`, `set_thinking_level` | in session — `session/set_model`, Cursor's parameterized `configOptions`, or Fx's advertised `model` option | in session — the model rides on each prompt | in session — a `set_model` control request | restart — all three are launch arguments |
 | Access mode | restart | restart | restart | restart | restart | restart |
 | Provider | restart | restart | restart | restart | restart | restart |
 
@@ -599,11 +599,16 @@ rather than stranding the task. Kimi Code advertises both, so it takes the first
 rung — `session/resume`, verified against a session left by an earlier process.
 
 Cursor's picker opt-in makes `session/new`, `session/load`, and
-`session/resume` return provider-owned `configOptions`. Waku resolves the CLI's
-flat model alias to the advertised `model` value, then applies any dynamic
-`thought_level`, `thinking`, and `fast` options returned by that selection. If
-an older Cursor agent advertises no model option, Waku retains the legacy
-`session/set_model` request.
+`session/resume` return provider-owned `configOptions`. Model discovery uses
+the same opt-in: Waku calls `cursor/list_available_models` after `initialize`
+and maps each model's config options onto the ordinary reasoning-effort,
+service-tier (`fast`), and context-window pickers. The CLI's flat aliases
+(`cursor-grok-4.6-xhigh-fast`) still resolve to the advertised base value,
+then Waku applies `thought_level`/`effort`, `thinking`, `fast`, and `context`
+from the session's traits (or from that alias suffix). If an older Cursor
+agent advertises no model option, Waku retains the legacy `session/set_model`
+request, and if ACP discovery is empty it falls back to parsing
+`cursor-agent models`.
 
 Fx also returns provider-owned config options, but its first model-category
 option selects an account provider while the option whose id is `model` selects
@@ -716,6 +721,14 @@ mode. The call is non-fatal either way, since an agent may expose no effort at
 all. Grok is the exception: effort rides on `session/set_model` as
 `_meta.reasoningEffort` (and as `--reasoning-effort` at launch), not as a
 session config option.
+
+Cursor is the other exception. Its parameterized picker exposes effort, fast
+mode, thinking, and context as per-model `configOptions` rather than a single
+well-known id. Discovery reads those options from `cursor/list_available_models`;
+the live session applies them with `session/set_config_option` after selecting
+the base model. Fast is Waku's service-tier control (`fast` vs Standard).
+Thinking is not a separate picker: it turns on when a non-`none` effort is
+applied, because that is what reveals the thought-level option.
 
 Grok's catalog comes from the plain-text `grok models` listing, which reports
 ids but no effort metadata. The hardcoded menu therefore covers only the exact

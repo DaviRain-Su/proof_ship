@@ -6,12 +6,17 @@ use std::process::Stdio;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use agent_client_protocol::schema::ProtocolVersion;
+use agent_client_protocol::schema::v1::{ClientCapabilities, Implementation, InitializeRequest};
+use agent_client_protocol::{Agent, Client, ConnectionTo, UntypedMessage};
+use serde_json::{Map, Value, json};
 
 use crate::model::{ProviderAgentPreset, ProviderKind, ProviderModel, ProviderModelOption};
+use waku_protocol::model_catalog::normalize_cursor_reasoning_effort;
 
 const CODEX_RPC_TIMEOUT: Duration = Duration::from_secs(5);
 const PI_RPC_TIMEOUT: Duration = Duration::from_secs(10);
+const CURSOR_ACP_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub fn fallback_models(provider: ProviderKind) -> Vec<ProviderModel> {
     match provider {
@@ -66,9 +71,9 @@ pub fn fallback_models(provider: ProviderKind) -> Vec<ProviderModel> {
             )),
             ProviderModel::new("claude-haiku-4-5", "Claude Haiku 4.5"),
         ],
-        // Cursor's full catalog is account-specific and exposed by the
-        // installed CLI. Auto remains the provider-owned default and keeps
-        // older CLIs selectable if model discovery is unavailable.
+        // Cursor's full catalog is account-specific and comes from ACP
+        // `cursor/list_available_models`. Auto remains the provider-owned
+        // default and keeps older CLIs selectable if discovery is unavailable.
         ProviderKind::Cursor => {
             vec![ProviderModel::new("auto", tr!("model_option.auto")).default()]
         }
@@ -278,6 +283,10 @@ fn parse_claude_models(value: &Value) -> Vec<ProviderModel> {
 }
 
 fn discover_cursor_models(binary: &Path) -> Vec<ProviderModel> {
+    let discovered = discover_cursor_models_via_acp(binary);
+    if !discovered.is_empty() {
+        return discovered;
+    }
     let mut command = crate::command_env::command(binary);
     let command = command.arg("models");
     let Ok(output) = crate::command_env::output(command) else {
@@ -289,6 +298,309 @@ fn discover_cursor_models(binary: &Path) -> Vec<ProviderModel> {
         String::from_utf8_lossy(&output.stderr)
     );
     parse_cursor_models(&combined)
+}
+
+/// Cursor's parameterized picker is an ACP extension: `cursor-agent models`
+/// still prints exploded CLI aliases, while `cursor/list_available_models`
+/// returns the base slug plus per-model config options (effort, fast, context).
+fn discover_cursor_models_via_acp(binary: &Path) -> Vec<ProviderModel> {
+    let Ok(cwd) = crate::acp_session::catalog_working_directory() else {
+        return Vec::new();
+    };
+    let Ok(agent) = crate::driver::catalog_agent(ProviderKind::Cursor, binary, &cwd) else {
+        return Vec::new();
+    };
+    let request = Client
+        .builder()
+        .name("waku-cursor-model-discovery")
+        .connect_with(agent, async move |connection: ConnectionTo<Agent>| {
+            let mut capabilities = ClientCapabilities::new().terminal(false);
+            let mut meta = Map::new();
+            meta.insert("parameterizedModelPicker".to_owned(), Value::Bool(true));
+            capabilities = capabilities.meta(meta);
+            connection
+                .send_request(
+                    InitializeRequest::new(ProtocolVersion::V1)
+                        .client_capabilities(capabilities)
+                        .client_info(Implementation::new("waku", env!("CARGO_PKG_VERSION"))),
+                )
+                .block_task()
+                .await?;
+            let request = UntypedMessage::new("cursor/list_available_models", json!({}))?;
+            connection.send_request(request).block_task().await
+        });
+    let response = smol::block_on(smol::future::race(
+        async move { request.await.map_err(|_| ()) },
+        async move {
+            smol::Timer::after(CURSOR_ACP_DISCOVERY_TIMEOUT).await;
+            Err(())
+        },
+    ));
+    response
+        .ok()
+        .map(|value| parse_cursor_available_models(&value))
+        .unwrap_or_default()
+}
+
+fn parse_cursor_available_models(value: &Value) -> Vec<ProviderModel> {
+    value
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(parse_cursor_available_model)
+        .collect()
+}
+
+fn parse_cursor_available_model(entry: &Value) -> Option<ProviderModel> {
+    let value = entry
+        .get("value")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?;
+    let name = entry
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| display_name_from_slug(value));
+    let id = if value == "default" { "auto" } else { value };
+    let mut model = ProviderModel::new(id, name);
+    if id == "auto" || value == "default" {
+        model = model.default();
+    }
+    let config_options = entry
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    Some(with_cursor_config_options(model, config_options))
+}
+
+fn with_cursor_config_options(mut model: ProviderModel, options: &[Value]) -> ProviderModel {
+    if let Some(effort) = find_cursor_effort_json(options) {
+        let mut efforts = Vec::new();
+        for (id, name) in json_select_choices(effort) {
+            let id = normalize_cursor_reasoning_effort(&id);
+            if id.is_empty()
+                || efforts
+                    .iter()
+                    .any(|option: &ProviderModelOption| option.id == id)
+            {
+                continue;
+            }
+            let label = cursor_select_label(&id, &name);
+            efforts.push(ProviderModelOption::new(id, label));
+        }
+        if !efforts.is_empty() {
+            let current =
+                json_current_string(effort).map(|value| normalize_cursor_reasoning_effort(&value));
+            let default = current
+                .filter(|id| efforts.iter().any(|option| option.id == *id))
+                .or_else(|| {
+                    ["high", "medium"]
+                        .into_iter()
+                        .find(|preferred| efforts.iter().any(|option| option.id == *preferred))
+                        .map(str::to_owned)
+                })
+                .or_else(|| efforts.first().map(|option| option.id.clone()));
+            if let Some(default) = default {
+                model = model.reasoning(efforts, default);
+            }
+        }
+    }
+    if let Some(fast) = options.iter().find(|option| is_cursor_fast_json(option)) {
+        let default = if json_current_bool(fast) == Some(true) {
+            "fast"
+        } else {
+            "default"
+        };
+        model = model.service_tiers(
+            [ProviderModelOption::new("fast", tr!("model_option.fast"))
+                .description(tr!("model_option.fast_description"))],
+            default,
+        );
+    }
+    if let Some(context) = options.iter().find(|option| is_cursor_context_json(option)) {
+        let windows: Vec<_> = json_select_choices(context)
+            .into_iter()
+            .filter(|(id, _)| !id.is_empty())
+            .map(|(id, name)| {
+                let label = if name.trim().is_empty() || name.contains(":icon-") {
+                    id.clone()
+                } else {
+                    name
+                };
+                ProviderModelOption::new(id, label)
+            })
+            .collect();
+        if !windows.is_empty() {
+            let default = json_current_string(context)
+                .filter(|id| windows.iter().any(|option| option.id == *id))
+                .or_else(|| windows.first().map(|option| option.id.clone()));
+            if let Some(default) = default {
+                model = model.context_windows(windows, default);
+            }
+        }
+    }
+    model
+}
+
+fn find_cursor_effort_json(options: &[Value]) -> Option<&Value> {
+    let candidates: Vec<&Value> = options
+        .iter()
+        .filter(|option| is_cursor_effort_json(option))
+        .collect();
+    candidates
+        .iter()
+        .copied()
+        .find(|option| json_option_category(option).eq_ignore_ascii_case("model_option"))
+        .or_else(|| {
+            candidates
+                .iter()
+                .copied()
+                .find(|option| json_option_id(option).eq_ignore_ascii_case("effort"))
+        })
+        .or_else(|| {
+            candidates
+                .iter()
+                .copied()
+                .find(|option| json_option_category(option).eq_ignore_ascii_case("thought_level"))
+        })
+        .or_else(|| candidates.first().copied())
+}
+
+fn is_cursor_effort_json(option: &Value) -> bool {
+    if !json_option_type(option).eq_ignore_ascii_case("select") {
+        return false;
+    }
+    let id = json_option_id(option).to_ascii_lowercase();
+    let name = json_option_name(option).to_ascii_lowercase();
+    id == "effort"
+        || id == "reasoning"
+        || name == "effort"
+        || name == "reasoning"
+        || name.contains("effort")
+        || name.contains("reasoning")
+}
+
+fn is_cursor_fast_json(option: &Value) -> bool {
+    if !json_option_category(option).eq_ignore_ascii_case("model_config") {
+        return false;
+    }
+    let id = json_option_id(option).to_ascii_lowercase();
+    let name = json_option_name(option).to_ascii_lowercase();
+    id == "fast" || name == "fast" || name.contains("fast mode")
+}
+
+fn is_cursor_context_json(option: &Value) -> bool {
+    if !json_option_category(option).eq_ignore_ascii_case("model_config") {
+        return false;
+    }
+    let id = json_option_id(option).to_ascii_lowercase();
+    let name = json_option_name(option).to_ascii_lowercase();
+    id == "context" || id == "context_size" || name.contains("context")
+}
+
+fn json_option_id(option: &Value) -> &str {
+    option
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+}
+
+fn json_option_name(option: &Value) -> &str {
+    option
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+}
+
+fn json_option_category(option: &Value) -> &str {
+    option
+        .get("category")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+}
+
+fn json_option_type(option: &Value) -> &str {
+    option
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default()
+}
+
+fn json_current_string(option: &Value) -> Option<String> {
+    match option.get("currentValue") {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Bool(value)) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn json_current_bool(option: &Value) -> Option<bool> {
+    match option.get("currentValue") {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(Value::String(value)) if value.eq_ignore_ascii_case("true") => Some(true),
+        Some(Value::String(value)) if value.eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
+}
+
+fn json_select_choices(option: &Value) -> Vec<(String, String)> {
+    let Some(entries) = option.get("options").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut choices = Vec::new();
+    for entry in entries {
+        if let Some(value) = entry
+            .get("value")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or(value);
+            choices.push((value.to_owned(), name.to_owned()));
+            continue;
+        }
+        let Some(nested) = entry.get("options").and_then(Value::as_array) else {
+            continue;
+        };
+        for nested_entry in nested {
+            let Some(value) = nested_entry
+                .get("value")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let name = nested_entry
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(value);
+            choices.push((value.to_owned(), name.to_owned()));
+        }
+    }
+    choices
+}
+
+fn cursor_select_label(id: &str, name: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() || name.contains(":icon-") {
+        if id.is_empty() {
+            name.to_owned()
+        } else {
+            reasoning_effort_label(id)
+        }
+    } else {
+        name.to_owned()
+    }
 }
 
 fn parse_cursor_models(output: &str) -> Vec<ProviderModel> {
@@ -1539,11 +1851,19 @@ opencode/big-pickle
     /// parser must not turn that into an empty catalogue.
     #[test]
     fn opencode_verbose_parsing_ignores_a_plain_listing() {
-        assert!(parse_opencode_verbose_models("opencode-go/deepseek-v4-flash
-").is_empty());
+        assert!(
+            parse_opencode_verbose_models(
+                "opencode-go/deepseek-v4-flash
+"
+            )
+            .is_empty()
+        );
         assert_eq!(
-            parse_opencode_models("opencode-go/deepseek-v4-flash
-").len(),
+            parse_opencode_models(
+                "opencode-go/deepseek-v4-flash
+"
+            )
+            .len(),
             1
         );
     }
@@ -1730,6 +2050,146 @@ opencode/big-pickle
         assert_eq!(models[1].name, "Codex 5.3 Low");
         assert_eq!(models[2].name, "Composer 2.5");
         assert!(!models[2].is_default);
+    }
+
+    #[test]
+    fn parses_cursor_acp_available_models_with_effort_fast_and_context() {
+        let models = parse_cursor_available_models(&json!({
+            "models": [
+                {
+                    "value": "default",
+                    "name": "Auto",
+                    "configOptions": []
+                },
+                {
+                    "value": "gpt-5.4",
+                    "name": "GPT-5.4",
+                    "configOptions": [
+                        {
+                            "id": "reasoning",
+                            "name": "Reasoning",
+                            "category": "thought_level",
+                            "type": "select",
+                            "currentValue": "medium",
+                            "options": [
+                                {"value": "none", "name": "None"},
+                                {"value": "low", "name": "Low"},
+                                {"value": "medium", "name": "Medium"},
+                                {"value": "high", "name": "High"},
+                                {"value": "extra-high", "name": "Extra High"}
+                            ]
+                        },
+                        {
+                            "id": "context",
+                            "name": "Context",
+                            "category": "model_config",
+                            "type": "select",
+                            "currentValue": "272k",
+                            "options": [
+                                {"value": "272k", "name": "272K"},
+                                {"value": "1m", "name": "1M"}
+                            ]
+                        },
+                        {
+                            "id": "fast",
+                            "name": "Fast",
+                            "category": "model_config",
+                            "type": "select",
+                            "currentValue": "false",
+                            "options": [
+                                {"value": "false", "name": "Off"},
+                                {"value": "true", "name": "Fast"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "value": "claude-opus-4-6",
+                    "name": "Opus 4.6",
+                    "configOptions": [
+                        {
+                            "id": "reasoning",
+                            "name": "Reasoning",
+                            "category": "thought_level",
+                            "type": "select",
+                            "currentValue": "high",
+                            "options": [
+                                {"value": "low", "name": "Low"},
+                                {"value": "medium", "name": "Medium"},
+                                {"value": "high", "name": "High"}
+                            ]
+                        },
+                        {
+                            "id": "effort",
+                            "name": "Effort",
+                            "category": "model_option",
+                            "type": "select",
+                            "currentValue": "max",
+                            "options": [
+                                {"value": "low", "name": "Low"},
+                                {"value": "medium", "name": "Medium"},
+                                {"value": "high", "name": "High"},
+                                {"value": "max", "name": "Max"}
+                            ]
+                        },
+                        {
+                            "id": "fast",
+                            "name": "Fast",
+                            "category": "model_config",
+                            "type": "select",
+                            "currentValue": "true",
+                            "options": [
+                                {"value": "false", "name": "Off"},
+                                {"value": "true", "name": "Fast"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }));
+
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["auto", "gpt-5.4", "claude-opus-4-6"]
+        );
+        assert!(models[0].is_default);
+        assert!(models[0].reasoning_efforts.is_empty());
+        assert_eq!(
+            models[1]
+                .reasoning_efforts
+                .iter()
+                .map(|option| option.id.as_str())
+                .collect::<Vec<_>>(),
+            ["none", "low", "medium", "high", "xhigh"]
+        );
+        assert_eq!(
+            models[1].default_reasoning_effort.as_deref(),
+            Some("medium")
+        );
+        assert_eq!(models[1].service_tiers[0].id, "fast");
+        assert_eq!(models[1].default_service_tier.as_deref(), Some("default"));
+        assert_eq!(
+            models[1]
+                .context_windows
+                .iter()
+                .map(|option| option.id.as_str())
+                .collect::<Vec<_>>(),
+            ["272k", "1m"]
+        );
+        assert_eq!(models[1].default_context_window.as_deref(), Some("272k"));
+        assert_eq!(
+            models[2]
+                .reasoning_efforts
+                .iter()
+                .map(|option| option.id.as_str())
+                .collect::<Vec<_>>(),
+            ["low", "medium", "high", "max"]
+        );
+        assert_eq!(models[2].default_reasoning_effort.as_deref(), Some("max"));
+        assert_eq!(models[2].default_service_tier.as_deref(), Some("fast"));
     }
 
     #[test]
@@ -2040,7 +2500,11 @@ mod opencode_effort_smoke {
             .iter()
             .filter(|model| !model.reasoning_efforts.is_empty())
             .collect();
-        println!("models={} with efforts={}", models.len(), with_efforts.len());
+        println!(
+            "models={} with efforts={}",
+            models.len(),
+            with_efforts.len()
+        );
         for model in with_efforts.iter().take(4) {
             println!(
                 "  {} -> {:?} (default {:?})",
@@ -2054,6 +2518,9 @@ mod opencode_effort_smoke {
             );
         }
         assert!(!models.is_empty(), "expected a catalogue");
-        assert!(!with_efforts.is_empty(), "expected some models to expose variants");
+        assert!(
+            !with_efforts.is_empty(),
+            "expected some models to expose variants"
+        );
     }
 }
