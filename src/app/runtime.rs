@@ -602,12 +602,10 @@ fn perform_provider_rewind(
         }
         // Unreachable through the UI, which hides rewinding for providers that
         // answer `supports_conversation_rollback` with false.
-        ProviderKind::Fx | ProviderKind::Kimi | ProviderKind::OpenCode2 => {
-            Err(anyhow::anyhow!(tr!(
-                "errors.provider_turn_branching_unsupported",
-                provider = provider.display_name()
-            )))
-        }
+        ProviderKind::Fx | ProviderKind::Kimi => Err(anyhow::anyhow!(tr!(
+            "errors.provider_turn_branching_unsupported",
+            provider = provider.display_name()
+        ))),
     }
 }
 
